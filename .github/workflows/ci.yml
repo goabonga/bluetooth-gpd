@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: ci
+
+# Pipeline order on main: resign-main -> ci -> release. ci starts once
+# resign-main completed, so the checks always run on signed commits; the
+# release workflow starts once ci completed. Pull requests run ci directly.
+on: # zizmor: ignore[dangerous-triggers]
+  pull_request:
+    branches: [main]
+  workflow_run:
+    workflows: [resign-main]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-24.04
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - name: Decide whether the checks run
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          go=true
+          note="Pull request: the checks run."
+          if [ "$EVENT" = "workflow_run" ]; then
+            tip=$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq .object.sha)
+            if [ "$CONCLUSION" != "success" ] || [ "$RUN_EVENT" != "push" ]; then
+              go=false
+              note="resign-main did not succeed on a push: the checks are skipped."
+            elif [ "$tip" != "$HEAD_SHA" ]; then
+              go=false
+              note="main moved since resign-main (commits re-signed or a newer push): a newer pipeline runs."
+            else
+              note="resign-main succeeded and ${HEAD_SHA:0:7} is the tip of main: the checks run."
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "$note" > gate.txt
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          # No checkout here: the script is not available, write the summary inline.
+          {
+            echo "## gate"
+            echo
+            echo "> [!NOTE]"
+            echo "> ${JOB_STATUS}: $(cat gate.txt 2>/dev/null || true)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  lint:
+    name: lint
+    needs: [gate]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install the toolchain
+        run: pacman -Syu --noconfirm --needed clang git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: clang-format
+        shell: bash
+        run: make format-check 2>&1 | tee lint.txt
+      - name: clang-tidy
+        shell: bash
+        run: make lint 2>&1 | tee -a lint.txt
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "lint (clang-format, clang-tidy)" "$JOB_STATUS" --file lint.txt
+
+  build:
+    name: build
+    needs: [gate]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install the toolchain
+        run: pacman -Syu --noconfirm --needed clang git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Build with gcc and clang
+        shell: bash
+        run: |
+          for cc in gcc clang; do
+            echo "== ${cc}"
+            make clean
+            make CC="$cc"
+            ./build/bluetooth --version
+            ./build/bluetooth Arch
+          done 2>&1 | tee build.txt
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "build on Arch Linux (gcc, clang)" "$JOB_STATUS" --file build.txt
+
+  test:
+    name: test
+    needs: [gate]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install the toolchain
+        run: pacman -Syu --noconfirm --needed clang git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Unit tests with gcc and clang (ASan, UBSan)
+        shell: bash
+        run: |
+          for cc in gcc clang; do
+            echo "== ${cc}"
+            make clean
+            make test CC="$cc"
+          done 2>&1 | tee test.txt
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "tests on Arch Linux (gcc, clang)" "$JOB_STATUS" --file test.txt
+
+  workflows:
+    name: workflows
+    needs: [gate]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: actionlint
+        shell: bash
+        run: uvx --from actionlint-py actionlint 2>&1 | tee workflows.txt
+      - name: zizmor
+        shell: bash
+        run: uvx zizmor --no-progress --offline .github/workflows 2>&1 | tee -a workflows.txt
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "workflows (actionlint, zizmor)" "$JOB_STATUS" --file workflows.txt
+
+  multicz:
+    name: multicz
+    needs: [gate]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      # NOTE: no python-version pin - multicz needs Python >=3.12.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Validate multicz config
+        shell: bash
+        run: uv tool run multicz validate --strict 2>&1 | tee multicz.txt
+      - name: Release plan
+        run: uv tool run multicz plan --summary "$GITHUB_STEP_SUMMARY"
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "multicz" "$JOB_STATUS" --file multicz.txt
