@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Re-signs, in place, the commits of a pull request branch so that only
+# signed commits reach `main`. Add the `resign` label to the pull request
+# (owner only): the branch is rebased on `main`, every commit is re-signed
+# with the GPG key and pushed back with an explicit lease.
+#
+# pull_request_target is required to use the signing key and the GH_PAT
+# personal access token. The pull request code is never executed: it is
+# only replayed by git, and the commands below come from this file on
+# `main`. Pull requests from forks are ignored.
+
+name: resign
+
+on: # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  resign:
+    name: re-sign pull request commits
+    if: >-
+      github.event.label.name == 'resign' &&
+      github.event.sender.login == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: resign-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Require GH_PAT and the GPG key
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          for name in GH_PAT GPG_PRIVATE_KEY GPG_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::the ${name} secret is required"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: true
+      - name: Import and unlock the GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          git config user.signingkey "$KEY_ID"
+          # The committer e-mail must be one of the key's identities for
+          # GitHub to show the commits as verified.
+          UID_LINE=$(gpg --list-secret-keys --with-colons | awk -F: '/^uid/{print $10; exit}')
+          git config user.name  "${UID_LINE% <*}"
+          git config user.email "$(echo "$UID_LINE" | sed -E 's/.*<(.*)>/\1/')"
+      - name: Rebase on main and re-sign every commit
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF"
+          git rebase --exec 'git commit --amend --no-edit -S' "origin/${BASE_REF}"
+      - name: Push the re-signed commits with an explicit lease
+        run: |
+          set -euo pipefail
+          git push --force-with-lease="${HEAD_REF}:${HEAD_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"
+      - name: Remove the label
+        if: always()
+        run: gh pr edit "$PR_NUMBER" --remove-label resign
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          gpg --batch --yes --delete-secret-keys "$(git config user.signingkey)" 2>/dev/null || true
+          rm -rf ~/.gnupg
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          {
+            echo "## resign: ${JOB_STATUS}"
+            echo
+            echo "Pull request #${PR_NUMBER} (\`${HEAD_REF}\`) rebased on \`main\` and re-signed."
+            echo
+            git log --format='- %h %G? %s' "origin/${BASE_REF}..HEAD" 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
