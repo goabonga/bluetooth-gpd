@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Re-signs the commits pushed to `main` without any signature, which is what
+# GitHub's "Rebase and merge" produces: it recreates the commits and does not
+# sign them. The unsigned commits of the push are replayed on the previous
+# head, re-signed with the GPG key and `main` is moved with an explicit lease.
+# First stage of the pipeline on main: resign-main -> ci -> release. ci
+# starts once this workflow completed, and skips itself when main moved
+# (the rewritten head starts a new chain, which also runs this workflow).
+#
+# Only commits without a signature are rewritten, so the new push does not
+# trigger another rewrite. Pushed with the GH_PAT personal access token, never
+# with github-actions[bot].
+
+name: resign-main
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: resign-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resign:
+    name: re-sign unsigned commits
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require GH_PAT and the GPG key
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          for name in GH_PAT GPG_PRIVATE_KEY GPG_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::the ${name} secret is required"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: true
+      - name: Look for unsigned commits
+        id: scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          needed=false
+          : > scan.txt
+          # A new branch or a force-pushed head has no usable previous head.
+          if [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+            && git merge-base --is-ancestor "$BEFORE" "$AFTER"; then
+            for sha in $(git rev-list --reverse "${BEFORE}..${AFTER}"); do
+              reason=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" --jq .commit.verification.reason)
+              echo "${sha:0:7} ${reason} $(git log -1 --format=%s "$sha")" >> scan.txt
+              if [ "$reason" = "unsigned" ]; then needed=true; fi
+            done
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+      - name: Import and unlock the GPG key
+        if: steps.scan.outputs.needed == 'true'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          git config user.signingkey "$KEY_ID"
+          # The committer e-mail must be one of the key's identities for
+          # GitHub to show the commits as verified.
+          UID_LINE=$(gpg --list-secret-keys --with-colons | awk -F: '/^uid/{print $10; exit}')
+          git config user.name  "${UID_LINE% <*}"
+          git config user.email "$(echo "$UID_LINE" | sed -E 's/.*<(.*)>/\1/')"
+      - name: Replay the commits signed and move main
+        if: steps.scan.outputs.needed == 'true'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Every commit after the first unsigned one gets a new parent, so
+          # all of the push is replayed and signed.
+          git rebase --force-rebase --exec 'git commit --amend --no-edit -S' "$BEFORE"
+          git push --force-with-lease="main:${AFTER}" origin HEAD:refs/heads/main
+      - name: Remove signing credentials
+        if: always() && steps.scan.outputs.needed == 'true'
+        run: |
+          gpg --batch --yes --delete-secret-keys "$(git config user.signingkey)" 2>/dev/null || true
+          rm -rf ~/.gnupg
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          NEEDED: ${{ steps.scan.outputs.needed }}
+        run: |
+          NOTE="Every commit of the push is already signed."
+          if [ "$NEEDED" = "true" ]; then NOTE="Unsigned commits were re-signed and main was moved."; fi
+          scripts/summary.sh "resign main" "$JOB_STATUS" --note "$NOTE" --file scan.txt
