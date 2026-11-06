@@ -202,6 +202,10 @@ jobs:
     if: needs.release.outputs.tag != ''
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ needs.release.outputs.tag }}
       GH_TOKEN: ${{ secrets.GH_PAT }}
@@ -231,6 +235,10 @@ jobs:
           tar -C dist -czf "dist/${name}.tar.gz" "$name"
           rm -rf "dist/${name}"
           (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
       - name: Upload to the GitHub release
         run: gh release upload "$TAG" dist/* --clobber
       - name: Summary
