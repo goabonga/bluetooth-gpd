@@ -5,6 +5,7 @@ CC      ?= cc
 CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude
 PREFIX  ?= /usr/local
+SANITIZE ?= address,undefined
 BUILD   := build
 
 LIB_OBJ := $(BUILD)/bgpd.o
@@ -23,11 +24,12 @@ $(BUILD):
 	mkdir -p $@
 
 # Unit tests, built with the address and undefined behaviour sanitizers.
+# Disable them with `make test SANITIZE=` where the platform rejects them.
 test: $(BUILD)/test_bgpd
 	$(BUILD)/test_bgpd
 
 $(BUILD)/test_bgpd: tests/test_bgpd.c src/bgpd.c include/bgpd.h | $(BUILD)
-	$(CC) $(CFLAGS) -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+	$(CC) $(CFLAGS) -g $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
 		$(LDFLAGS) -o $@ tests/test_bgpd.c src/bgpd.c
 
 install: all
