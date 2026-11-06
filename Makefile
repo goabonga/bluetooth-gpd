@@ -9,7 +9,7 @@ BUILD   := build
 
 LIB_OBJ := $(BUILD)/bgpd.o
 
-.PHONY: all clean install
+.PHONY: all test clean install
 
 all: $(BUILD)/bluetooth
 
@@ -21,6 +21,14 @@ $(BUILD)/%.o: src/%.c include/bgpd.h | $(BUILD)
 
 $(BUILD):
 	mkdir -p $@
+
+# Unit tests, built with the address and undefined behaviour sanitizers.
+test: $(BUILD)/test_bgpd
+	$(BUILD)/test_bgpd
+
+$(BUILD)/test_bgpd: tests/test_bgpd.c src/bgpd.c include/bgpd.h | $(BUILD)
+	$(CC) $(CFLAGS) -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+		$(LDFLAGS) -o $@ tests/test_bgpd.c src/bgpd.c
 
 install: all
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
