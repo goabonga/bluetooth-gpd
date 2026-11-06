@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Fails a pull request containing a commit that GitHub does not show as
+# verified. Fix it with the `resign` label (see resign.yml).
+
+name: signatures
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  signatures:
+    name: signatures
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check that every commit of the pull request is verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" \
+            --jq '.[] | [.sha, .commit.verification.verified, .commit.verification.reason, (.commit.message | split("\n")[0])] | @tsv' \
+            > commits.tsv
+          bad=0
+          {
+            echo "## signatures"
+            echo
+            echo "| Commit | Verified | Reason | Subject |"
+            echo "| --- | :---: | --- | --- |"
+            while IFS=$'\t' read -r sha ok reason subject; do
+              echo "| \`${sha:0:7}\` | ${ok} | ${reason} | ${subject} |"
+              if [ "$ok" != "true" ]; then bad=$((bad + 1)); fi
+            done < commits.tsv
+            if [ "$bad" -gt 0 ]; then
+              echo
+              echo "> [!CAUTION]"
+              echo "> ${bad} commit(s) are not verified. Add the \`resign\` label to the pull request to re-sign them."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$bad" -gt 0 ]; then
+            echo "::error::${bad} commit(s) are not verified: add the resign label to re-sign them"
+            exit 1
+          fi
