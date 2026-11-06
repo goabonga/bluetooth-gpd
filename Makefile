@@ -6,11 +6,12 @@ CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude
 PREFIX  ?= /usr/local
 SANITIZE ?= address,undefined
+SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
 LIB_OBJ := $(BUILD)/bgpd.o
 
-.PHONY: all test clean install
+.PHONY: all test format format-check lint clean install
 
 all: $(BUILD)/bluetooth
 
@@ -31,6 +32,15 @@ test: $(BUILD)/test_bgpd
 $(BUILD)/test_bgpd: tests/test_bgpd.c src/bgpd.c include/bgpd.h | $(BUILD)
 	$(CC) $(CFLAGS) -g $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
 		$(LDFLAGS) -o $@ tests/test_bgpd.c src/bgpd.c
+
+format:
+	clang-format -i $(SOURCES)
+
+format-check:
+	clang-format --dry-run -Werror $(SOURCES)
+
+lint:
+	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -Iinclude
 
 install: all
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
