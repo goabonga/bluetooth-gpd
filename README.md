@@ -49,7 +49,8 @@ SHA-256. The tarball carries a build provenance attestation, checked with
 
 Commits on `main` must be signed. The branch ruleset in
 `.github/rulesets/main.json` enforces this and the required checks; apply it
-with `scripts/apply-rulesets.sh`.
+with `scripts/apply-rulesets.sh`. The labels used by the pipelines (`resign`,
+`dependencies`, `github-actions`) are created with `scripts/apply-labels.sh`.
 
 ## Contributing
 
