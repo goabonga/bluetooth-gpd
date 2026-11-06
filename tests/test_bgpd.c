@@ -8,13 +8,13 @@
 
 static int failures;
 
-#define CHECK(cond)                                                    \
-	do {                                                           \
-		if (!(cond)) {                                         \
-			fprintf(stderr, "%s:%d: check failed: %s\n",   \
-				__FILE__, __LINE__, #cond);            \
-			failures++;                                    \
-		}                                                      \
+#define CHECK(cond)                                                            \
+	do {                                                                   \
+		if (!(cond)) {                                                 \
+			fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, \
+				__LINE__, #cond);                              \
+			failures++;                                            \
+		}                                                              \
 	} while (0)
 
 static void test_version(void)
