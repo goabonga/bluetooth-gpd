@@ -33,29 +33,6 @@ make lint           # clang-tidy
 make format         # apply clang-format
 ```
 
-## Continuous integration and releases
-
-The `ci` workflow lints, builds (gcc and clang) and tests (with the
-sanitizers) the project in an Arch Linux container, and validates the
-workflows and the release configuration.
-
-Releases are computed by [multicz](https://github.com/goabonga/multicz) from
-Conventional Commits. After a green `ci` on `main`, the `release` workflow
-bumps the version, tags, creates the GitHub release and attaches a
-`bluetooth-gpd-<version>-linux-x86_64.tar.gz` binary built on Arch Linux, with its
-SHA-256. The tarball carries a build provenance attestation, checked with
-`gh attestation verify <tarball> --repo goabonga/bluetooth-gpd`. The workflows need the `GH_PAT`, `GPG_PRIVATE_KEY` and
-`GPG_PASSPHRASE` repository secrets.
-
-Dependabot pull requests are rewritten by the `dependabot-rewrite`
-workflow: their commits become signed `ci:` Conventional Commits and the
-pull request is retitled accordingly.
-
-Commits on `main` must be signed. The branch ruleset in
-`.github/rulesets/main.json` enforces this and the required checks; apply it
-with `scripts/apply-rulesets.sh`. The labels used by the pipelines (`resign`,
-`dependencies`, `github-actions`) are created with `scripts/apply-labels.sh`.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
