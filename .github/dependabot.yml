@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Dependabot v2 configuration.
+
+version: 2
+
+updates:
+  # Pinned versions of GitHub Actions in `.github/workflows/*.yml`.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    groups:
+      ci-actions:
+        applies-to: version-updates
+        patterns:
+          - "actions/*"
+          - "astral-sh/*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
