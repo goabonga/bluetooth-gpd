@@ -18,4 +18,5 @@ make
 make test
 ```
 
-The unit tests run with AddressSanitizer and UndefinedBehaviorSanitizer.
+The unit tests run with AddressSanitizer and UndefinedBehaviorSanitizer;
+pass `SANITIZE=` to disable them on platforms that reject them.
