@@ -27,11 +27,4 @@ You can expect an acknowledgement within **3 business days**, a triage
 assessment within **10 business days**, and a fix or written mitigation
 plan before any public disclosure.
 
-## Scope
-
-bluetooth-gpd is a small C program and library. The parts most relevant to
-security are the handling of command-line arguments and the bounds of the
-buffers written by `bgpd_greet`. Vulnerabilities in third-party tools
-(compilers, libc) should be reported upstream.
-
 Thanks for helping keep the project and its users safe.
