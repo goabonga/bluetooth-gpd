@@ -47,6 +47,10 @@ SHA-256. The tarball carries a build provenance attestation, checked with
 `gh attestation verify <tarball> --repo goabonga/bluetooth-gpd`. The workflows need the `GH_PAT`, `GPG_PRIVATE_KEY` and
 `GPG_PASSPHRASE` repository secrets.
 
+Dependabot pull requests are rewritten by the `dependabot-rewrite`
+workflow: their commits become signed `ci:` Conventional Commits and the
+pull request is retitled accordingly.
+
 Commits on `main` must be signed. The branch ruleset in
 `.github/rulesets/main.json` enforces this and the required checks; apply it
 with `scripts/apply-rulesets.sh`. The labels used by the pipelines (`resign`,
