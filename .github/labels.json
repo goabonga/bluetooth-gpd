@@ -1,0 +1,17 @@
+[
+  {
+    "name": "resign",
+    "color": "5319e7",
+    "description": "Rebase the pull request on main and re-sign its commits"
+  },
+  {
+    "name": "dependencies",
+    "color": "0366d6",
+    "description": "Dependency updates"
+  },
+  {
+    "name": "github-actions",
+    "color": "000000",
+    "description": "GitHub Actions updates"
+  }
+]
