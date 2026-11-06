@@ -43,7 +43,8 @@ Releases are computed by [multicz](https://github.com/goabonga/multicz) from
 Conventional Commits. After a green `ci` on `main`, the `release` workflow
 bumps the version, tags, creates the GitHub release and attaches a
 `bluetooth-gpd-<version>-linux-x86_64.tar.gz` binary built on Arch Linux, with its
-SHA-256. The workflows need the `GH_PAT`, `GPG_PRIVATE_KEY` and
+SHA-256. The tarball carries a build provenance attestation, checked with
+`gh attestation verify <tarball> --repo goabonga/bluetooth-gpd`. The workflows need the `GH_PAT`, `GPG_PRIVATE_KEY` and
 `GPG_PASSPHRASE` repository secrets.
 
 Commits on `main` must be signed. The branch ruleset in
