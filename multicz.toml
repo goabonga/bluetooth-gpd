@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# multicz.toml - versioning, changelog and tagging driven by Conventional
+# Commits. Docs: https://goabonga.github.io/multicz/
+
+[project]
+commit_convention = "conventional"
+tag_format = "v{version}"
+initial_version = "0.0.0"
+state_file = ".multicz/state.json"
+# `[skip ci]` makes GitHub skip the workflows triggered by the release
+# commit push: a release must not trigger a run.
+release_commit_message = "chore(release): bump {summary}\n\n{body}\n\n[skip ci]"
+
+[project.bump_rules]
+feat = "minor"
+fix = "patch"
+perf = "patch"
+revert = "patch"
+
+[[project.changelog_sections]]
+title = "Added"
+types = ["feat"]
+
+[[project.changelog_sections]]
+title = "Fixed"
+types = ["fix"]
+
+[[project.changelog_sections]]
+title = "Performance"
+types = ["perf"]
+
+[components.bluetooth-gpd]
+# Curated: only what is compiled counts toward a release. Docs, tests, CI
+# and tooling are intentionally untracked; a release-relevant change in an
+# untracked file is invisible.
+paths = ["src/**", "include/**", "Makefile"]
+bump_files = [
+    { file = "include/bgpd.h", key = "regex:BGPD_VERSION\\s+\"([^\"]+)\"" },
+]
+changelog = "CHANGELOG.md"
