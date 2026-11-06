@@ -1,0 +1,240 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Last stage of the pipeline on main: resign-main -> ci -> release.
+# Releases the component when its paths changed, once ci completed after
+# resign-main on main, then attaches the binary built on Arch Linux to the
+# GitHub release. A separate workflow so that pull requests never show a
+# release job. Commits, tags and releases are made with the GH_PAT personal
+# access token, never with github-actions[bot].
+#
+# The gate job holds the release back while the commits of main are not
+# signed or while main moved since ci started (see resign-main.yml, which
+# re-signs the commits and starts a new chain).
+
+name: release
+
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    # Runs once ci succeeded in the main pipeline (never for pull requests,
+    # whose ci runs have the `pull_request` event).
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_run'
+    runs-on: ubuntu-24.04
+    outputs:
+      signed: ${{ steps.check.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check that the commits since the last release are signed
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          last=$(git describe --tags --abbrev=0 --match 'v*' "$HEAD_SHA" 2>/dev/null || true)
+          signed=true
+          : > gate.txt
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
+          if [ "$tip" != "$HEAD_SHA" ]; then
+            signed=false
+            echo "main moved to ${tip:0:7} since ci started: a newer pipeline releases" >> gate.txt
+          fi
+          for sha in $(git rev-list "${last:+${last}..}${HEAD_SHA}"); do
+            reason=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" --jq .commit.verification.reason)
+            echo "${sha:0:7} ${reason} $(git log -1 --format=%s "$sha")" >> gate.txt
+            if [ "$reason" = "unsigned" ]; then signed=false; fi
+          done
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          SIGNED: ${{ steps.check.outputs.signed }}
+        run: |
+          NOTE="Every commit since the last release is signed."
+          if [ "$SIGNED" = "false" ]; then NOTE="Unsigned commits or main moved: the release waits for the next pipeline."; fi
+          scripts/summary.sh "release gate" "$JOB_STATUS" --note "$NOTE" --file gate.txt
+
+  release:
+    name: release
+    needs: [gate]
+    if: needs.gate.outputs.signed == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      # Everything the pipelines create (commits, tags, releases, PRs,
+      # issues) is authored with the GH_PAT personal access token, never
+      # with github-actions[bot].
+      - name: Require GH_PAT
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "::error::the GH_PAT secret (personal access token) is required"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+          persist-credentials: true
+      # NOTE: no python-version pin here - multicz needs Python >=3.12 and
+      # `uv tool install multicz` fails under 3.11.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Install multicz
+        run: uv tool install multicz
+      - name: Configure git author from the PAT owner
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          user=$(gh api user)
+          login=$(echo "$user" | jq -r .login)
+          git config user.name  "$(echo "$user" | jq -r '.name // .login')"
+          git config user.email "$(echo "$user" | jq -r .id)+${login}@users.noreply.github.com"
+      - name: Detect GPG availability
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_PASSPHRASE" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Import and unlock GPG key
+        if: steps.gpg.outputs.available == 'true'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          git config user.signingkey "$KEY_ID"
+          # GitHub only marks a signature "Verified" when the committer
+          # e-mail is one of the key's identities: use the key's first uid
+          # instead of the PAT owner's noreply address.
+          UID_LINE=$(gpg --list-secret-keys --with-colons | awk -F: '/^uid/{print $10; exit}')
+          git config user.name  "${UID_LINE% <*}"
+          git config user.email "$(echo "$UID_LINE" | sed -E 's/.*<(.*)>/\1/')"
+      - name: Plan release
+        id: plan
+        run: |
+          set -euo pipefail
+          uv tool run multicz plan --summary "$GITHUB_STEP_SUMMARY"
+          PLAN=$(uv tool run multicz plan --output json)
+          # `plan --output json` may print a second JSON document (plugin
+          # advice) without `bumps`: only read the document that has them.
+          COMPONENTS=$(echo "$PLAN" | jq -r 'select(.bumps != null) | .bumps | keys[]')
+          ARGS=""
+          for c in $COMPONENTS; do ARGS="$ARGS --component $c"; done
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          if [ -n "$COMPONENTS" ]; then echo "has_bumps=true" >> "$GITHUB_OUTPUT";
+          else echo "has_bumps=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Bump, commit, tag, push
+        if: steps.plan.outputs.has_bumps == 'true'
+        env:
+          ARGS: ${{ steps.plan.outputs.args }}
+          GPG_AVAILABLE: ${{ steps.gpg.outputs.available }}
+        run: |
+          set -euo pipefail
+          SIGN_FLAG=""
+          if [ "$GPG_AVAILABLE" = "true" ]; then SIGN_FLAG="--sign"; fi
+          # shellcheck disable=SC2086
+          uv tool run multicz bump $ARGS --commit --tag --push $SIGN_FLAG --output json | tee bump-result.json
+      - name: Create GitHub Releases
+        # `bump` only tags and pushes. `--target` pins each release to the
+        # release commit explicitly.
+        if: steps.plan.outputs.has_bumps == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          COMMIT=$(jq -r '.git.commit' bump-result.json)
+          for tag in $(jq -r '.git.tags[]' bump-result.json); do
+            uv tool run multicz release-notes --tag "$tag" --output md > "notes-${tag}.md"
+            gh release create "$tag" --target "$COMMIT" --title "$tag" --notes-file "notes-${tag}.md"
+          done
+      - name: Expose the released tag
+        id: tag
+        if: steps.plan.outputs.has_bumps == 'true'
+        run: echo "tag=$(jq -r '.git.tags[0]' bump-result.json)" >> "$GITHUB_OUTPUT"
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          NOTE="No release: no component bump pending."
+          if [ -f bump-result.json ]; then
+            NOTE="Released: $(jq -r '[.git.tags[] | "`" + . + "`"] | join(", ")' bump-result.json)."
+          fi
+          scripts/summary.sh "release" "$JOB_STATUS" --note "$NOTE"
+
+  assets:
+    name: assets
+    needs: [release]
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Install the toolchain
+        run: pacman -Syu --noconfirm --needed git github-cli
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
+      - name: Build and test the tagged source
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test
+          make clean
+          make
+      - name: Package the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          name="bluetooth-gpd-${version}-linux-x86_64"
+          mkdir -p "dist/${name}"
+          cp build/bluetooth LICENSE README.md "dist/${name}/"
+          tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          rm -rf "dist/${name}"
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+      - name: Upload to the GitHub release
+        run: gh release upload "$TAG" dist/* --clobber
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: scripts/summary.sh "release assets" "$JOB_STATUS" --note "Binary built on Arch Linux for ${TAG}."
