@@ -24,6 +24,7 @@ enum bgpd_ipc_kind {
 	BGPD_IPC_SCAN,
 	BGPD_IPC_POWER,
 	BGPD_IPC_ADAPTER,
+	BGPD_IPC_VISIBLE, /* makes the adapter visible, or hides it */
 	BGPD_IPC_CANCEL,
 	BGPD_IPC_ACCEPT, /* answers the open prompt, with input */
 	BGPD_IPC_REJECT,

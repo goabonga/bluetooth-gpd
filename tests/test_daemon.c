@@ -104,6 +104,11 @@ static void test_interface(void)
 	command(client, daemon, mirror, BGPD_IPC_CONNECT, addr);
 	CHECK(!slot->held);
 
+	/* The adapter is made visible on request. */
+	m->settings = 1U;
+	command(client, daemon, mirror, BGPD_IPC_VISIBLE, NULL);
+	CHECK(m->prepare_action == BGPD_OP_DISCOVERABLE);
+
 	/* A device that is not paired is not connected. */
 	addr[0] = 2;
 	command(client, daemon, mirror, BGPD_IPC_CONNECT, addr);

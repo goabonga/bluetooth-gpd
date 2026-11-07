@@ -25,6 +25,7 @@ static const struct {
     {"scan", BGPD_IPC_SCAN, false, false},
     {"power", BGPD_IPC_POWER, false, false},
     {"adapter", BGPD_IPC_ADAPTER, false, false},
+    {"visible", BGPD_IPC_VISIBLE, false, false},
     {"cancel", BGPD_IPC_CANCEL, false, false},
     {"accept", BGPD_IPC_ACCEPT, false, true},
     {"reject", BGPD_IPC_REJECT, false, false},

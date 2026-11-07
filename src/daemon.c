@@ -150,6 +150,9 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 	case BGPD_IPC_ADAPTER:
 		bgpd_mgmt_next_adapter(m);
 		break;
+	case BGPD_IPC_VISIBLE:
+		bgpd_mgmt_discoverable(m);
+		break;
 	case BGPD_IPC_CANCEL:
 		bgpd_mgmt_cancel_pair(m);
 		break;
