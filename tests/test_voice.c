@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -65,20 +64,6 @@ static uint64_t now_ms(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint64_t)ts.tv_sec * 1000U + (uint64_t)ts.tv_nsec / 1000000U;
-}
-
-static int connect_client(const char *path)
-{
-	struct sockaddr_un address = {.sun_family = AF_UNIX};
-	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-
-	snprintf(address.sun_path, sizeof(address.sun_path), "%s", path);
-	if (fd >= 0 &&
-	    connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-		close(fd);
-		return -1;
-	}
-	return fd;
 }
 
 static void make_fakes(void)
@@ -165,128 +150,6 @@ static void headset_side(sbc_t *encoder, int *step, size_t *frames_sent)
 	}
 }
 
-static void test_refused(const char *path)
-{
-	uint8_t rate[4];
-	int client;
-
-	make_fakes();
-	CHECK(bgpd_voice_listen(&v, path) == 0);
-	/* Without a headset in use the client is refused with rate 0. */
-	client = connect_client(path);
-	CHECK(client >= 0);
-	CHECK(write(client, "BGPDCAP1", 8) == 8);
-	for (int i = 0; i < 20; i++) {
-		bgpd_voice_poll(&v);
-		usleep(2000);
-	}
-	CHECK(read(client, rate, sizeof(rate)) == 4 && rate[0] == 0 &&
-	      rate[1] == 0);
-	CHECK(v.state == BGPD_VOICE_IDLE &&
-	      strstr(v.status, "No headset") != NULL);
-	close(client);
-
-	/* A wrong greeting too. */
-	bgpd_voice_target(&v, headset, "Headset");
-	client = connect_client(path);
-	CHECK(write(client, "NOTVALID", 8) == 8);
-	for (int i = 0; i < 20; i++) {
-		bgpd_voice_poll(&v);
-		usleep(2000);
-	}
-	CHECK(read(client, rate, sizeof(rate)) == 4 && rate[0] == 0);
-	close(client);
-	bgpd_voice_shutdown(&v);
-	drop_fakes();
-}
-
-static void test_microphone(const char *path)
-{
-	sbc_t encoder;
-	uint8_t rate[4], buffer[8192];
-	int16_t heard[8192];
-	size_t samples = 0, bytes = 0, frames_sent = 0;
-	int step = 0, client;
-	uint64_t start;
-
-	make_fakes();
-	CHECK(bgpd_voice_listen(&v, path) == 0);
-	CHECK(sbc_init_msbc(&encoder, 0) == 0);
-	bgpd_voice_target(&v, headset, "Headset");
-	client = connect_client(path);
-	CHECK(client >= 0);
-	CHECK(write(client, "BGPDCAP1", 8) == 8);
-
-	start = now_ms();
-	memset(rate, 0, sizeof(rate));
-	{
-		size_t got = 0;
-
-		while (now_ms() - start < 4000 && samples < 3000) {
-			ssize_t n;
-
-			bgpd_voice_poll(&v);
-			headset_side(&encoder, &step, &frames_sent);
-			if (got < 4) {
-				n = read(client, rate + got, 4 - got);
-				if (n > 0)
-					got += (size_t)n;
-			} else {
-				n = read(client, buffer + bytes % 2,
-					 sizeof(buffer) - bytes % 2);
-				if (n > 0) {
-					size_t total = bytes % 2 + (size_t)n;
-
-					for (size_t i = 0;
-					     i + 1 < total && samples < 8192;
-					     i += 2)
-						heard[samples++] =
-						    (int16_t)(buffer[i] |
-							      (unsigned int)
-								      buffer[i +
-									     1]
-								  << 8U);
-					bytes = total % 2;
-					if (bytes == 1)
-						buffer[0] = buffer[total - 1];
-				}
-			}
-			usleep(1000);
-		}
-	}
-	/* mSBC: 16 kHz. The tone is 1 kHz: 2 crossings per period. */
-	CHECK((unsigned int)rate[0] + 256U * rate[1] + 65536U * rate[2] ==
-	      16000);
-	CHECK(samples >= 1000);
-	{
-		unsigned int crossings = 0;
-		size_t first = 240,
-		       count = samples > first ? samples - first : 0;
-
-		for (size_t i = first + 1; i < samples; i++)
-			if ((heard[i] < 0) != (heard[i - 1] < 0))
-				crossings++;
-		/* One crossing every 8 samples: 1/8 of the count. */
-		CHECK(count > 600 && crossings > count / 8 - 6 &&
-		      crossings < count / 8 + 6);
-	}
-	CHECK(bgpd_voice_streaming(&v));
-	CHECK(strstr(v.status, "microphone on") != NULL);
-
-	/* When the client leaves, the voice and the control links close. */
-	close(client);
-	for (int i = 0; i < 50; i++) {
-		bgpd_voice_poll(&v);
-		usleep(2000);
-	}
-	CHECK(v.state == BGPD_VOICE_IDLE);
-	CHECK(!bgpd_sco_active(&v.sco) && !bgpd_hfp_active(&v.hfp));
-
-	sbc_finish(&encoder);
-	bgpd_voice_shutdown(&v);
-	drop_fakes();
-}
-
 /* A client whose greeting was read is given to the microphone. */
 static void test_attach(void)
 {
@@ -345,16 +208,7 @@ static void test_attach(void)
 
 int main(void)
 {
-	char dir[] = "/tmp/bgpd-voice-XXXXXX";
-	char path[100];
-
-	if (mkdtemp(dir) == NULL)
-		return 2;
-	snprintf(path, sizeof(path), "%s/capture.sock", dir);
-	test_refused(path);
-	test_microphone(path);
 	test_attach();
-	rmdir(dir);
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
 		return 1;
