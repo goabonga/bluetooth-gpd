@@ -125,6 +125,8 @@ static void test_demo(const char *program)
 	type("j");
 	type("p");
 	CHECK(seen("simulated pairing"));
+	type("c");
+	CHECK(seen("connection"));
 	type("\t");
 	CHECK(seen("Paired"));
 	type("x");

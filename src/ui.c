@@ -22,8 +22,13 @@ static const ctui_table_column columns[COLS_] = {
 };
 
 static const char *const hints =
-    "s scan  p pair  d disconnect  x forget  o power  a adapter  "
+    "s scan  p pair  c connect  d disconnect  x forget  o power  a adapter  "
     "Tab filter  Esc cancel  q quit";
+
+static void say(struct bgpd_mgmt *m, const char *text)
+{
+	snprintf(m->status, sizeof(m->status), "%s", text);
+}
 
 static struct bgpd_device *selected_device(struct bgpd_ui *ui)
 {
@@ -97,6 +102,42 @@ void bgpd_ui_init(struct bgpd_ui *ui, struct bgpd_mgmt *m, bool demo)
 	ui->mgmt = m;
 	ui->demo = demo;
 	ctui_table_init(&ui->table, columns, COLS_, 0, cell, ui);
+	bgpd_hog_init(&ui->hog);
+}
+
+static void connect_device(struct bgpd_ui *ui, struct bgpd_device *d)
+{
+	struct bgpd_mgmt *m = ui->mgmt;
+
+	if (ui->demo) {
+		d->connected = true;
+		say(m, "DEMO: simulated connection");
+	} else if (d->addr[6] == BGPD_ADDR_BREDR)
+		say(m, "Classic devices connect through audio (not available)");
+	else if (!d->paired)
+		say(m, "Pair the device first");
+	else
+		bgpd_hog_connect(&ui->hog, d->addr, d->name);
+}
+
+void bgpd_ui_poll(struct bgpd_ui *ui)
+{
+	struct bgpd_mgmt *m = ui->mgmt;
+
+	bgpd_hog_poll(&ui->hog);
+	if (ui->hog.changed) {
+		say(m, ui->hog.status);
+		ui->hog.changed = false;
+	}
+	/* A new LE bond is dropped by the kernel after 2 s unless held. */
+	if (ui->was_pairing && !m->pairing && !ui->demo) {
+		struct bgpd_device *d =
+		    bgpd_devices_get(&m->devices, m->pair_addr);
+
+		if (d != NULL && d->paired)
+			connect_device(ui, d);
+	}
+	ui->was_pairing = m->pairing;
 }
 
 static ctui_tone state_tone(const struct bgpd_mgmt *m, const char **text)
@@ -207,11 +248,6 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 
 /* ---- operations: on the kernel, or on the table in demo mode ---- */
 
-static void say(struct bgpd_mgmt *m, const char *text)
-{
-	snprintf(m->status, sizeof(m->status), "%s", text);
-}
-
 static void toggle_power(struct bgpd_ui *ui)
 {
 	struct bgpd_mgmt *m = ui->mgmt;
@@ -252,10 +288,12 @@ static void pair(struct bgpd_ui *ui, struct bgpd_device *d)
 
 static void disconnect(struct bgpd_ui *ui, struct bgpd_device *d)
 {
-	if (ui->demo)
+	if (ui->demo) {
 		d->connected = false;
-	else
-		bgpd_mgmt_disconnect(ui->mgmt, d);
+		return;
+	}
+	bgpd_hog_close(&ui->hog);
+	bgpd_mgmt_disconnect(ui->mgmt, d);
 }
 
 static void forget(struct bgpd_ui *ui)
@@ -344,6 +382,8 @@ bool bgpd_ui_key(struct bgpd_ui *ui, int key)
 		return true;
 	if (key == 'p')
 		pair(ui, d);
+	else if (key == 'c')
+		connect_device(ui, d);
 	else if (key == 'd')
 		disconnect(ui, d);
 	else if (key == 'x') {
