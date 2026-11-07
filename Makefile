@@ -9,7 +9,7 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := bgpd
+CORE    := bgpd device
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
