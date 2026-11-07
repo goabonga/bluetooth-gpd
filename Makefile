@@ -35,6 +35,7 @@ BUILD   := build
 CORE    := device store mgmt hog
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
+LIB     := $(BUILD)/libbgpd.a
 TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 
 .PHONY: help all test format format-check lint clean install
@@ -46,8 +47,13 @@ help: ## List the make targets
 
 all: $(BUILD)/bluetooth ## Build everything
 
-$(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB_OBJ) $(CTUI_DEP)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(CTUI_LIBS)
+# The core modules form a static library, shared by every executable.
+$(LIB): $(LIB_OBJ)
+	rm -f $@
+	$(AR) rcs $@ $^
+
+$(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_DEP)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_LIBS)
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -c -o $@ $<
