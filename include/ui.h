@@ -16,6 +16,7 @@
 #include <ctui/table.h>
 
 #include "hog.h"
+#include "ipc.h"
 #include "mgmt.h"
 
 #define BGPD_UI_MIN_COLUMNS 60
@@ -27,6 +28,8 @@ struct bgpd_ui {
 	bool paired_only;    /* the "Paired" tab */
 	bool was_pairing;    /* a pairing was in progress at the last poll */
 	struct bgpd_hog hog; /* the BLE HID device being served */
+	struct bgpd_ipc_client *client; /* the daemon, or NULL */
+	bool answered; /* the open prompt was answered, the daemon is told */
 	size_t rows[BGPD_MAX_DEVICES];
 	size_t visible;
 	ctui_table table;
@@ -46,6 +49,12 @@ void bgpd_ui_demo(struct bgpd_mgmt *m);
 
 /* ctui and curses must be initialised. */
 void bgpd_ui_init(struct bgpd_ui *ui, struct bgpd_mgmt *m, bool demo);
+
+/*
+ * Makes the interface a client of the daemon: operations are sent to it and
+ * mgmt, kept up to date from its snapshots, is only a copy of its state.
+ */
+void bgpd_ui_attach(struct bgpd_ui *ui, struct bgpd_ipc_client *client);
 
 /* Advances the BLE connection and follows the pairing; call often. */
 void bgpd_ui_poll(struct bgpd_ui *ui);

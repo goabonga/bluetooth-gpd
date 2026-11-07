@@ -78,6 +78,11 @@ $(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
 		$(LDFLAGS) -o $@ $< $(CORE_C) -lutil
 
+# The interface test links the interface and ctui, and draws on /dev/null.
+$(BUILD)/test_ui_client: tests/test_ui_client.c src/ui.c $(CORE_C) $(wildcard include/*.h) $(CTUI_DEP) | $(BUILD)
+	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
+		$(LDFLAGS) -o $@ $< src/ui.c $(CORE_C) $(CTUI_LIBS) -lutil
+
 format: ## Format the sources with clang-format
 	clang-format -i $(SOURCES)
 
