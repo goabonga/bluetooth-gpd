@@ -97,8 +97,10 @@ local session (`sudo udevadm control --reload && sudo udevadm trigger
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
 negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
 53) and `t` plays a test tone through it, encoded with libsbc and paced in
-real time. Only one audio device is in use at a time. Its volume is applied by
-the daemon before the encoding, as a gain from -50 dB at 1 % to silence at 0.
+real time. Only one audio device is in use at a time. The volume is set on the
+device when it has an absolute volume (AVRCP), and the buttons of the device
+then update the volume shown; otherwise the daemon applies it before the
+encoding, as a gain from -50 dB at 1 % to silence at 0.
 
 ## Playing audio
 
