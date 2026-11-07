@@ -230,6 +230,105 @@ static void test_client(void)
 	rmdir(dir);
 }
 
+static int avrcp_end;
+
+static int open_avrcp(const uint8_t addr[BGPD_ADDR_SIZE])
+{
+	(void)addr;
+	return avrcp_end;
+}
+
+/* When the headset has a hardware volume, no gain is applied to the audio. */
+static void test_hardware_volume(void)
+{
+	static const uint8_t endpoints[] = {0x08, 0x08};
+	static const uint8_t caps[] = {1, 0, 7, 6, 0, 0, 0x3f, 0xff, 2, 64};
+	int sig[2], media[2], control[2];
+	uint8_t frame[64];
+	unsigned int frames = 0, crossings = 0;
+	int peak = 0;
+	sbc_t decoder;
+	uint64_t start;
+	ssize_t n;
+
+	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sig) == 0);
+	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, media) ==
+	      0);
+	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, control) ==
+	      0);
+	channels[0] = sig[0];
+	channels[1] = media[0];
+	sink_sig = sig[1];
+	sink_media = media[1];
+	next_channel = 0;
+	avrcp_end = control[0];
+	bgpd_audio_init(&audio);
+	audio.avdtp.open_channel = open_channel;
+	audio.avrcp.open_channel = open_avrcp;
+	CHECK(bgpd_audio_connect(&audio, headset, "Headset") == 0);
+	bgpd_audio_poll(&audio);
+	serve_command(endpoints, sizeof(endpoints));
+	serve_command(caps, sizeof(caps));
+	serve_command(NULL, 0);
+	serve_command(NULL, 0);
+	for (int i = 0; i < 4; i++)
+		bgpd_audio_poll(&audio);
+	CHECK(audio.avdtp.state == BGPD_AVDTP_READY);
+	CHECK(bgpd_avrcp_active(&audio.avrcp));
+
+	/* The headset answers the registration with its volume: 64/127. */
+	n = read(control[1], frame, sizeof(frame));
+	CHECK(n == 18 && frame[9] == 0x31);
+	{
+		uint8_t answer[15] = {(uint8_t)((frame[0] & 0xf0U) | 2U),
+				      0x11,
+				      0x0e,
+				      0x0f,
+				      0x48,
+				      0x00,
+				      0x00,
+				      0x19,
+				      0x58,
+				      0x31,
+				      0,
+				      0,
+				      2,
+				      0x0d,
+				      0x40};
+
+		CHECK(write(control[1], answer, sizeof(answer)) ==
+		      (ssize_t)sizeof(answer));
+	}
+	bgpd_audio_poll(&audio);
+	CHECK(audio.hw_volume && audio.volume == 50);
+
+	/* The volume is set on the headset: 30 % is 38/127. */
+	bgpd_audio_set_volume(&audio, 30);
+	n = read(control[1], frame, sizeof(frame));
+	CHECK(n == 14 && frame[9] == 0x50 && frame[13] == 38);
+
+	/* The audio is not attenuated: a tone keeps its level. */
+	CHECK(bgpd_audio_tone(&audio, 100) == 0);
+	CHECK(sbc_init(&decoder, 0) == 0);
+	decoder.endian = SBC_LE;
+	start = now_ms();
+	for (int i = 0; i < 300 && now_ms() - start < 2000; i++) {
+		bgpd_audio_poll(&audio);
+		accept_pending();
+		frames += decode_media(&decoder, &crossings, &peak);
+		usleep(2000);
+	}
+	CHECK(frames > 30);
+	CHECK(peak > 5000 && peak < 7000);
+
+	sbc_finish(&decoder);
+	bgpd_audio_close(&audio);
+	CHECK(!audio.hw_volume);
+	close(control[1]);
+	close(sink_sig);
+	close(sink_media);
+}
+
 int main(void)
 {
 	static const uint8_t endpoints[] = {0x08, 0x08};
@@ -334,6 +433,7 @@ int main(void)
 		return 1;
 	}
 	test_client();
+	test_hardware_volume();
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
 		return 1;

@@ -22,6 +22,7 @@
 #include <sbc/sbc.h>
 
 #include "avdtp.h"
+#include "avrcp.h"
 
 #define BGPD_AUDIO_RING 131072U
 #define BGPD_AUDIO_HELLO "BGPDPCM1"
@@ -29,6 +30,7 @@
 
 struct bgpd_audio {
 	struct bgpd_avdtp avdtp;
+	struct bgpd_avrcp avrcp; /* hardware volume of the device */
 	sbc_t sbc;
 	bool encoding;	   /* sbc is initialised for the current stream */
 	size_t frame_pcm;  /* bytes of PCM for one SBC frame */
@@ -36,10 +38,12 @@ struct bgpd_audio {
 	unsigned int frame_samples; /* samples of each channel in a frame */
 	uint64_t epoch;		    /* clock of the first frame */
 	uint64_t frames_sent;
-	bool sent_any;	      /* a frame was sent in this stream */
-	unsigned int volume;  /* 0 to 100: gain applied before the encoder */
-	uint32_t tone_ms;     /* test tone asked for, until the stream starts */
-	uint32_t tone_left;   /* samples of test tone still to play */
+	bool sent_any;	     /* a frame was sent in this stream */
+	unsigned int volume; /* 0 to 100: gain applied before the encoder */
+	bool hw_volume;	     /* the device applies the volume itself (AVRCP) */
+	bool avrcp_tried;   /* the control channel was opened for this device */
+	uint32_t tone_ms;   /* test tone asked for, until the stream starts */
+	uint32_t tone_left; /* samples of test tone still to play */
 	uint32_t tone_phase;  /* position in the tone, in samples */
 	int listener, client; /* audio socket, and the client being served */
 	char hello[BGPD_AUDIO_HELLO_SIZE];
@@ -59,7 +63,10 @@ int bgpd_audio_listen(struct bgpd_audio *audio, const char *path);
 /* $XDG_RUNTIME_DIR/bluetooth-audio.sock; -1 when there is no such directory. */
 int bgpd_audio_default_path(char *buffer, size_t size);
 
-/* Sets the volume, 0 to 100, applied to the audio before it is encoded. */
+/*
+ * Sets the volume, 0 to 100: on the device when it has an absolute volume
+ * (AVRCP), else as a gain applied to the audio before it is encoded.
+ */
 void bgpd_audio_set_volume(struct bgpd_audio *audio, unsigned int percent);
 
 /* Starts connecting to a paired Classic audio device. */

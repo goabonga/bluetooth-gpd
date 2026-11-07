@@ -35,6 +35,7 @@ void bgpd_audio_init(struct bgpd_audio *audio)
 	audio->listener = audio->client = -1;
 	audio->volume = 100;
 	bgpd_avdtp_init(&audio->avdtp);
+	bgpd_avrcp_init(&audio->avrcp);
 }
 
 bool bgpd_audio_active(const struct bgpd_audio *audio)
@@ -229,6 +230,8 @@ void bgpd_audio_close(struct bgpd_audio *audio)
 {
 	finish_encoder(audio);
 	bgpd_avdtp_close(&audio->avdtp);
+	bgpd_avrcp_close(&audio->avrcp);
+	audio->hw_volume = audio->avrcp_tried = false;
 	audio->tone_ms = audio->tone_left = 0;
 	drop_client(audio);
 	audio->ring_head = audio->ring_used = 0;
@@ -307,6 +310,8 @@ static void tone_frame(struct bgpd_audio *audio, int16_t *pcm)
 void bgpd_audio_set_volume(struct bgpd_audio *audio, unsigned int percent)
 {
 	audio->volume = percent > 100U ? 100U : percent;
+	if (audio->hw_volume)
+		bgpd_avrcp_set_volume(&audio->avrcp, audio->volume);
 }
 
 /* -50 dB at 1 % up to 0 dB at 100 %, silence at 0. */
@@ -321,7 +326,7 @@ static void apply_volume(const struct bgpd_audio *audio, int16_t *pcm)
 {
 	double g = gain(audio->volume);
 
-	if (audio->volume >= 100U)
+	if (audio->hw_volume || audio->volume >= 100U)
 		return;
 	for (size_t i = 0; i < (size_t)audio->frame_samples * CHANNELS; i++)
 		pcm[i] = (int16_t)(pcm[i] * g);
@@ -412,7 +417,22 @@ void bgpd_audio_poll(struct bgpd_audio *audio)
 		accept_client(audio);
 		read_client(audio);
 	}
+	/* The control channel gives the volume of the device, when it has one.
+	 */
+	if (!audio->avrcp_tried && a->state >= BGPD_AVDTP_READY) {
+		audio->avrcp_tried = true;
+		bgpd_avrcp_connect(&audio->avrcp, a->addr);
+	}
+	bgpd_avrcp_poll(&audio->avrcp);
+	if (audio->avrcp.changed) {
+		audio->avrcp.changed = false;
+		audio->hw_volume = audio->avrcp.supported;
+		if (audio->hw_volume && audio->avrcp.volume >= 0)
+			audio->volume = (unsigned int)audio->avrcp.volume;
+	}
 	if (a->state == BGPD_AVDTP_IDLE) {
+		bgpd_avrcp_close(&audio->avrcp);
+		audio->hw_volume = audio->avrcp_tried = false;
 		finish_encoder(audio);
 		audio->tone_ms = audio->tone_left = 0;
 		drop_client(audio);
