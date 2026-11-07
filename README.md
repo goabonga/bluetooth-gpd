@@ -68,6 +68,7 @@ connects as soon as it runs.
 | --- | --- |
 | Up/Down, k/j | Select a device |
 | s | Start or stop scanning (Classic and LE) |
+| v | Make the adapter visible for two minutes, or hide it, so that other devices can pair |
 | p | Pair the selected device |
 | c | Connect a paired BLE device and serve it as an input device (HID over GATT) |
 | d | Disconnect the selected device, which then stays disconnected |
@@ -88,8 +89,10 @@ device to the user of the active local session (`sudo udevadm control
 Classic devices are not connected yet.
 
 Pairing prompts (confirmation code, PIN of 1 to 16 characters, passkey of up
-to 6 digits) open a dialog in the interface; unsolicited requests are
-rejected. Address types are `BR` (Classic), `LE-P` (public LE) and `LE-R` (random LE); the flags are
+to 6 digits) open a dialog in the interface. A device that starts the pairing
+itself (after `v` made the adapter visible) is asked the same way, as an
+incoming pairing; requests are rejected when no interface is open to answer
+them. Address types are `BR` (Classic), `LE-P` (public LE) and `LE-R` (random LE); the flags are
 P paired, C connected and S key saved.
 
 ## Tests
