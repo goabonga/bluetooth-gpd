@@ -77,7 +77,7 @@ connects as soon as it runs.
 | p | Pair the selected device |
 | c | Connect a paired device: a BLE device is served as an input device (HID over GATT), a Classic one opens its audio stream (A2DP) |
 | t | Play a three second test tone on the selected Classic audio device |
-| + / - | Raise or lower the volume of the audio device in use by 5 % |
+| + / - | Raise or lower by 5 % the volume of the selected audio device, else of the first one |
 | d | Disconnect the selected device, which then stays disconnected |
 | x | Forget the device and its pairing, after confirmation |
 | o | Turn the adapter on or off |
@@ -97,7 +97,8 @@ local session (`sudo udevadm control --reload && sudo udevadm trigger
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
 negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
 53) and `t` plays a test tone through it, encoded with libsbc and paced in
-real time. Only one audio device is in use at a time. The volume is set on the
+real time. Up to four audio devices can be connected at the same time, each
+with its own stream, volume and microphone. The volume is set on the
 device when it has an absolute volume (AVRCP), and the buttons of the device
 then update the volume shown; otherwise the daemon applies it before the
 encoding, as a gain from -50 dB at 1 % to silence at 0.
@@ -118,16 +119,25 @@ aplay -D bluetooth_out music.wav
 application -> bluetooth_out -> plug -> bluetooth plugin --(socket)--> bluetooth-daemon -> SBC -> headset
 ```
 
+`bluetooth_out` plays on the device connected last. To choose one when
+several are connected, define a PCM with the address of the device:
+
+```
+pcm.speaker { type plug slave.pcm { type bluetooth device "AA:BB:CC:DD:EE:FF" } }
+```
+
 The plugin talks to the audio socket of the daemon,
 `$XDG_RUNTIME_DIR/bluetooth-audio.sock` (`--audio-socket PATH`; `server "PATH"`
-in the PCM definition). It sends `BGPDPCM1`, receives the sample rate
-negotiated with the device (4 bytes, little-endian, 0 when no device is ready)
-and then writes signed 16-bit little-endian stereo PCM, which the daemon
-encodes and sends at the speed of the stream. The PCM cannot be opened until
-an audio device is connected (`c` in the interface), and it has only that
-rate: `plug` converts the rest. The stream is suspended once the client has
-left and its audio has been played. A program such as `mixer-daemon` can use
-`bluetooth_out` as its output PCM.
+in the PCM definition). It sends `BGPDPCM2` and the address of the device,
+14 hexadecimal digits as in the control protocol (all zeros for the device
+connected last) and a newline, receives the sample rate negotiated with the
+device (4 bytes, little-endian, 0 when it cannot be served) and then writes
+signed 16-bit little-endian stereo PCM, which the daemon encodes and sends at
+the speed of the stream. The PCM cannot be opened until the device is
+connected (`c` in the interface), and it has only that rate: `plug` converts
+the rest. The stream is suspended once the client has left and its audio has
+been played. A program such as `mixer-daemon` can use `bluetooth_out` as its
+output PCM.
 
 Pairing prompts (confirmation code, PIN of 1 to 16 characters, passkey of up
 to 6 digits) open a dialog in the interface. A device that starts the pairing
@@ -139,7 +149,8 @@ P paired, C connected and S key saved.
 ## Headset microphone
 
 Recording from the PCM `bluetooth_in` starts everything the microphone needs
-on the audio device in use (`c` first):
+on the audio device connected last, or the one named by `device` in the
+PCM definition (`c` first):
 
 ```bash
 arecord -D bluetooth_in -f S16_LE -r 16000 -c 1 -d 5 voice.wav
@@ -153,9 +164,10 @@ receives the microphone as mono 16-bit samples at the rate of the link
 (`plug` converts to the rate you ask), and opening it can take several
 seconds. Closing it ends the voice and hands-free links. The audio socket
 for it is `$XDG_RUNTIME_DIR/bluetooth-capture.sock` (`--capture-socket PATH`;
-`capture_server "PATH"` in the PCM definition): the client sends
-`BGPDCAP1`, receives the sample rate (4 bytes, little-endian; 0 when there is
-no headset or the link failed) and then the PCM. Calls and the earpiece are
+`capture_server "PATH"` in the PCM definition): the client sends `BGPDCAP2`,
+the address of the device and a newline as for playback, receives the sample
+rate (4 bytes, little-endian; 0 when there is no headset or the link failed)
+and then the PCM. Calls and the earpiece are
 not handled: the sound still plays through the A2DP stream, and some
 headsets lower its quality or pause it while the voice link is open.
 
@@ -166,12 +178,12 @@ Other programs can follow and drive the daemon on its control socket
 of its state whenever it changes: tab-separated records `state`, `adapter`,
 `status`, `warning`, `prompt`, one `device` per device
 (`ADDR14 flags rssi name`, the address being 14 hexadecimal digits: six
-little-endian bytes and the type), an `audio` record when an audio device is
-in use (`ADDR14 connecting|ready|streaming volume name`, the volume being 0 to
-100) and `end`. A snapshot replaces the previous one. The client sends one
+little-endian bytes and the type), one `audio` record per
+audio device in use (`ADDR14 connecting|ready|streaming volume name`, the
+volume being 0 to 100, or -1 when unknown) and `end`. A snapshot replaces the previous one. The client sends one
 command per line: `scan`, `power`, `adapter`, `visible`, `cancel`,
 `accept [input]`, `reject`, `pair`, `connect`, `disconnect`, `unpair` and `tone`
-followed by an address, and `volume N`. `include/ipc.h` is the reference.
+followed by an address, and `volume ADDR14 N` (N from 0 to 100). `include/ipc.h` is the reference.
 
 ## Tests
 
