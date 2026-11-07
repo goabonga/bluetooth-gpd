@@ -32,8 +32,13 @@ CTUI_CFLAGS := $(shell $(PKG_CONFIG) --cflags ctui) $(NCURSES_CFLAGS)
 CTUI_LIBS   := $(shell $(PKG_CONFIG) --libs ctui) $(NCURSES_LIBS)
 CTUI_DEP    :=
 endif
+# The ALSA plugin that plays through the daemon.
+ALSA_CFLAGS := $(shell $(PKG_CONFIG) --cflags alsa)
+ALSA_LIBS   := $(shell $(PKG_CONFIG) --libs alsa)
+PLUGIN      := libasound_module_pcm_bluetooth.so
+ALSA_PLUGIN_DIR ?= $(PREFIX)/lib/alsa-lib
 SANITIZE ?= address,undefined
-SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
+SOURCES := $(wildcard src/*.c alsa/*.c include/*.h tests/*.c)
 BUILD   := build
 
 CORE    := device store mgmt hog avdtp audio ipc ipc_server ipc_client daemon
@@ -49,7 +54,7 @@ TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 help: ## List the make targets
 	@awk -F':.*## ' '/^[a-z][a-z-]*:.*## /{printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: $(BUILD)/bluetooth $(BUILD)/bluetooth-daemon ## Build everything
+all: $(BUILD)/bluetooth $(BUILD)/bluetooth-daemon $(BUILD)/$(PLUGIN) ## Build everything
 
 # The core modules form a static library, shared by every executable.
 $(LIB): $(LIB_OBJ)
@@ -61,6 +66,9 @@ $(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_DEP)
 
 $(BUILD)/bluetooth-daemon: $(BUILD)/daemon_main.o $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/daemon_main.o $(LIB) -lutil $(SBC_LIBS)
+
+$(BUILD)/$(PLUGIN): alsa/pcm_bluetooth.c | $(BUILD)
+	$(CC) $(CFLAGS) $(ALSA_CFLAGS) -fPIC -DPIC -shared $(LDFLAGS) -o $@ $< $(ALSA_LIBS)
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -c -o $@ $<
@@ -82,6 +90,11 @@ $(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
 		$(LDFLAGS) -o $@ $< $(CORE_C) -lutil $(SBC_LIBS)
 
+# The plugin test loads the plugin in another process, through ALSA.
+$(BUILD)/test_alsa: tests/test_alsa.c $(CORE_C) $(wildcard include/*.h) $(BUILD)/$(PLUGIN) | $(BUILD)
+	$(CC) $(CFLAGS) $(ALSA_CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
+		$(LDFLAGS) -o $@ $< $(CORE_C) $(ALSA_LIBS) -lutil $(SBC_LIBS)
+
 # The interface test links the interface and ctui, and draws on /dev/null.
 $(BUILD)/test_ui_client: tests/test_ui_client.c src/ui.c $(CORE_C) $(wildcard include/*.h) $(CTUI_DEP) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
@@ -94,11 +107,12 @@ format-check: ## Fail when a source is not formatted
 	clang-format --dry-run -Werror $(SOURCES)
 
 lint: $(CTUI_DEP) ## Run clang-tidy on the sources
-	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(SBC_CFLAGS) $(CTUI_CFLAGS)
+	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(SBC_CFLAGS) $(ALSA_CFLAGS) $(CTUI_CFLAGS)
 
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
 	install -Dm755 $(BUILD)/bluetooth-daemon $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
+	install -Dm755 $(BUILD)/$(PLUGIN) $(DESTDIR)$(ALSA_PLUGIN_DIR)/$(PLUGIN)
 	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
 	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/user/bluetooth-daemon.service
 	install -Dm644 udev/70-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/70-bluetooth-uhid.rules
