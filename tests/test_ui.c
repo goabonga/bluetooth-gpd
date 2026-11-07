@@ -6,6 +6,7 @@
  * the screen output. Usage: test_ui PROGRAM
  */
 #include "bgpd.h"
+#include "ipc.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -15,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -52,11 +54,16 @@ static void drain(int ms)
 	}
 }
 
+/* Called while waiting, to run the fake daemon of a test. */
+static void (*pump)(void);
+
 static bool seen(const char *text)
 {
 	for (int i = 0; i < 40; i++) {
 		if (strstr(screen, text) != NULL)
 			return true;
+		if (pump != NULL)
+			pump();
 		drain(50);
 	}
 	return strstr(screen, text) != NULL;
@@ -65,7 +72,11 @@ static bool seen(const char *text)
 static void type(const char *keys)
 {
 	CHECK(write(master, keys, strlen(keys)) == (ssize_t)strlen(keys));
-	drain(150);
+	for (int i = 0; i < 3; i++) {
+		if (pump != NULL)
+			pump();
+		drain(50);
+	}
 }
 
 static void start(const char *program, char *const args[])
@@ -138,6 +149,68 @@ static void test_demo(const char *program)
 	CHECK(finish() == 0);
 }
 
+static struct bgpd_ipc_server server;
+static struct bgpd_mgmt daemon_state;
+static struct bgpd_ipc_command received[8];
+static size_t received_count;
+
+static void handler(void *context, const struct bgpd_ipc_command *command)
+{
+	(void)context;
+	if (received_count < sizeof(received) / sizeof(received[0]))
+		received[received_count++] = *command;
+}
+
+static void serve(void)
+{
+	bgpd_ipc_serve(&server, &daemon_state, handler, NULL);
+}
+
+/* The program as a client of a daemon played by the test. */
+static void test_client(const char *program)
+{
+	static const uint8_t keyboard[BGPD_ADDR_SIZE] = {1, 2, 3, 4, 5, 6, 1};
+	char dir[] = "/tmp/bgpd-ui-XXXXXX";
+	char path[128];
+	char *args[] = {"--socket", path};
+	struct bgpd_device *d;
+
+	if (mkdtemp(dir) == NULL) {
+		CHECK(!"temporary directory");
+		return;
+	}
+	snprintf(path, sizeof(path), "%s/bluetooth.sock", dir);
+	bgpd_mgmt_init(&daemon_state, BGPD_NO_INDEX, NULL);
+	daemon_state.ready = true;
+	daemon_state.settings = 1U;
+	d = bgpd_devices_get(&daemon_state.devices, keyboard);
+	if (d != NULL)
+		snprintf(d->name, sizeof(d->name), "Flipper keyboard");
+	CHECK(bgpd_ipc_listen(&server, path) == 0);
+	received_count = 0;
+	pump = serve;
+
+	start(program, args);
+	CHECK(seen("Flipper keyboard"));
+	type("s");
+	CHECK(received_count == 1 && received[0].kind == BGPD_IPC_SCAN);
+
+	daemon_state.prompt_kind = BGPD_PROMPT_PIN;
+	snprintf(daemon_state.prompt, sizeof(daemon_state.prompt),
+		 "Enter the PIN of the keyboard");
+	CHECK(seen("Enter the PIN of the keyboard"));
+	type("1234\n");
+	CHECK(received_count == 2 && received[1].kind == BGPD_IPC_ACCEPT);
+	CHECK(strcmp(received[1].input, "1234") == 0);
+
+	bgpd_ipc_server_close(&server);
+	CHECK(seen("Waiting for the daemon"));
+	type("q");
+	CHECK(finish() == 0);
+	pump = NULL;
+	rmdir(dir);
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2) {
@@ -146,6 +219,7 @@ int main(int argc, char **argv)
 	}
 	test_options(argv[1]);
 	test_demo(argv[1]);
+	test_client(argv[1]);
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
 		return 1;

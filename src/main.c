@@ -2,12 +2,12 @@
 /* Copyright (c) 2026 Chris <goabonga@pm.me> */
 
 #include "bgpd.h"
+#include "ipc.h"
 #include "mgmt.h"
 #include "ui.h"
 
 #include <ctui/theme.h>
 #include <curses.h>
-#include <errno.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdio.h>
@@ -16,10 +16,9 @@
 #include <unistd.h>
 
 #define USAGE                                                                  \
-	"Usage: bluetooth [--demo] [--ascii] [--adapter hci0] "                \
-	"[--state-dir DIR] [--trace FILE]\n"                                   \
-	"Scans and pairs Bluetooth devices through the Linux kernel; no "      \
-	"BlueZ service.\n"
+	"Usage: bluetooth [--demo] [--ascii] [--socket PATH]\n"                \
+	"Manages Bluetooth devices through bluetooth-daemon, which must "      \
+	"run.\n"
 
 static volatile sig_atomic_t quitting;
 
@@ -29,34 +28,12 @@ static void interrupted(int sig)
 	quitting = 1;
 }
 
-/* Accepts "hci1" or "1". */
-static bool adapter_index(const char *text, uint16_t *index)
-{
-	char *end;
-	unsigned long n;
-
-	if (strncmp(text, "hci", 3) == 0)
-		text += 3;
-	if (text[0] < '0' || text[0] > '9')
-		return false;
-	errno = 0;
-	n = strtoul(text, &end, 10);
-	if (errno != 0 || *end != '\0' || n >= BGPD_NO_INDEX)
-		return false;
-	*index = (uint16_t)n;
-	return true;
-}
-
 static void run(struct bgpd_ui *ui)
 {
-	struct bgpd_mgmt *m = ui->mgmt;
-
 	timeout(50);
 	while (!quitting) {
 		int key;
 
-		if (!ui->demo)
-			bgpd_mgmt_poll(m);
 		bgpd_ui_poll(ui);
 		bgpd_ui_draw(ui);
 		key = getch();
@@ -69,18 +46,18 @@ int main(int argc, char **argv)
 {
 	struct bgpd_mgmt *m = calloc(1, sizeof(*m));
 	struct bgpd_ui *ui = calloc(1, sizeof(*ui));
-	char state_dir[4096];
-	uint16_t adapter = BGPD_NO_INDEX;
-	const char *dir = NULL, *trace = NULL;
+	struct bgpd_ipc_client *client = calloc(1, sizeof(*client));
+	char socket_path[108];
+	const char *sock = NULL;
 	bool demo = false;
 	int status = 0;
 
-	if (m == NULL || ui == NULL) {
-		free(ui);
-		free(m);
-		return 1;
+	if (m == NULL || ui == NULL || client == NULL) {
+		status = 1;
+		goto done;
 	}
 	bgpd_mgmt_init(m, BGPD_NO_INDEX, NULL);
+	client->fd = -1;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--version") == 0) {
 			puts(BGPD_VERSION);
@@ -93,14 +70,8 @@ int main(int argc, char **argv)
 			demo = true;
 		} else if (strcmp(argv[i], "--ascii") == 0) {
 			setenv("CTUI_ASCII", "1", 1);
-		} else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
-			trace = argv[++i];
-		} else if (strcmp(argv[i], "--state-dir") == 0 &&
-			   i + 1 < argc) {
-			dir = argv[++i];
-		} else if (strcmp(argv[i], "--adapter") == 0 && i + 1 < argc &&
-			   adapter_index(argv[i + 1], &adapter)) {
-			i++;
+		} else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
+			sock = argv[++i];
 		} else {
 			fprintf(stderr,
 				"Unknown or incomplete argument: %s\n%s",
@@ -114,35 +85,22 @@ int main(int argc, char **argv)
 		status = 1;
 		goto done;
 	}
-	if (dir == NULL && !demo) {
-		if (bgpd_store_default_dir(state_dir, sizeof(state_dir)) < 0) {
-			fprintf(stderr, "No directory for the keys: %s\n",
-				strerror(errno));
-			status = 1;
-			goto done;
-		}
-		dir = state_dir;
-	}
-	bgpd_mgmt_init(m, adapter, dir);
 	if (demo) {
-		if (bgpd_drop_capabilities() < 0) {
-			fprintf(stderr, "Dropping capabilities: %s\n",
-				strerror(errno));
-			status = 1;
-			goto done;
-		}
 		bgpd_ui_demo(m);
-	} else if (trace != NULL && bgpd_mgmt_trace(m, trace) < 0) {
-		fprintf(stderr, "Trace file %s: %s\n", trace, strerror(errno));
-		status = 1;
-		goto done;
-	} else if (bgpd_mgmt_open(m) < 0) {
-		fprintf(stderr, "%s\n", m->status);
-		status = 1;
-		goto done;
+	} else {
+		if (sock == NULL) {
+			if (bgpd_ipc_default_path(socket_path,
+						  sizeof(socket_path)) < 0) {
+				fputs("No XDG_RUNTIME_DIR for the daemon "
+				      "socket.\n",
+				      stderr);
+				status = 1;
+				goto done;
+			}
+			sock = socket_path;
+		}
+		bgpd_ipc_connect(client, sock);
 	}
-	if (!demo)
-		bgpd_mgmt_check_manager(m, "/proc");
 	setlocale(LC_ALL, "");
 	signal(SIGINT, interrupted);
 	signal(SIGTERM, interrupted);
@@ -155,11 +113,14 @@ int main(int argc, char **argv)
 	curs_set(0);
 	ctui_theme_init();
 	bgpd_ui_init(ui, m, demo);
+	if (!demo)
+		bgpd_ui_attach(ui, client);
 	run(ui);
 	endwin();
-	bgpd_hog_close(&ui->hog);
 done:
-	bgpd_mgmt_close(m);
+	if (client != NULL)
+		bgpd_ipc_client_close(client);
+	free(client);
 	free(ui);
 	free(m);
 	return status;
