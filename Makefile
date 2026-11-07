@@ -1,11 +1,15 @@
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2026 Chris <goabonga@pm.me>
+#SPDX - License - Identifier : MIT
+#Copyright(c) 2026 Chris < goabonga @pm.me>
 
 CC      ?= cc
 CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
 PKG_CONFIG ?= pkg-config
+#libsbc encodes the audio sent to Bluetooth headsets and speakers.
+SBC_CFLAGS := $(shell $(PKG_CONFIG) --cflags sbc)
+SBC_LIBS   := $(shell $(PKG_CONFIG) --libs sbc) -lm
+CFLAGS     += $(SBC_CFLAGS)
 NCURSES_CFLAGS := $(shell $(PKG_CONFIG) --cflags ncursesw)
 NCURSES_LIBS   := $(shell $(PKG_CONFIG) --libs ncursesw)
 
@@ -32,7 +36,7 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := device store mgmt hog avdtp ipc ipc_server ipc_client daemon
+CORE    := device store mgmt hog avdtp audio ipc ipc_server ipc_client daemon
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a
@@ -56,7 +60,7 @@ $(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_DEP)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_LIBS)
 
 $(BUILD)/bluetooth-daemon: $(BUILD)/daemon_main.o $(LIB)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/daemon_main.o $(LIB) -lutil
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/daemon_main.o $(LIB) -lutil $(SBC_LIBS)
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -c -o $@ $<
@@ -76,12 +80,12 @@ test: all $(TESTS) ## Build and run the unit tests
 
 $(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
-		$(LDFLAGS) -o $@ $< $(CORE_C) -lutil
+		$(LDFLAGS) -o $@ $< $(CORE_C) -lutil $(SBC_LIBS)
 
 # The interface test links the interface and ctui, and draws on /dev/null.
 $(BUILD)/test_ui_client: tests/test_ui_client.c src/ui.c $(CORE_C) $(wildcard include/*.h) $(CTUI_DEP) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
-		$(LDFLAGS) -o $@ $< src/ui.c $(CORE_C) $(CTUI_LIBS) -lutil
+		$(LDFLAGS) -o $@ $< src/ui.c $(CORE_C) $(CTUI_LIBS) -lutil $(SBC_LIBS)
 
 format: ## Format the sources with clang-format
 	clang-format -i $(SOURCES)
@@ -90,7 +94,7 @@ format-check: ## Fail when a source is not formatted
 	clang-format --dry-run -Werror $(SOURCES)
 
 lint: $(CTUI_DEP) ## Run clang-tidy on the sources
-	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(CTUI_CFLAGS)
+	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(SBC_CFLAGS) $(CTUI_CFLAGS)
 
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
