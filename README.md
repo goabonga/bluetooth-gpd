@@ -8,7 +8,7 @@ Terminal Bluetooth manager for Linux, built on ctui.
 
 ## Build
 
-Requires a C11 compiler, GNU make, pkg-config, ncursesw and the
+Requires a C11 compiler, GNU make, pkg-config, ncursesw, libsbc (`sbc`) and the
 [ctui](https://github.com/goabonga/ctui) library, found through `ctui.pc`
 when installed, else in `../ctui`. `CTUI_DIR=path` always uses that checkout
 instead, even when ctui is installed, to develop against a local ctui; it is
@@ -70,7 +70,8 @@ connects as soon as it runs.
 | s | Start or stop scanning (Classic and LE) |
 | v | Make the adapter visible for two minutes, or hide it, so that other devices can pair |
 | p | Pair the selected device |
-| c | Connect a paired BLE device and serve it as an input device (HID over GATT) |
+| c | Connect a paired device: a BLE device is served as an input device (HID over GATT), a Classic one opens its audio stream (A2DP) |
+| t | Play a three second test tone on the selected Classic audio device |
 | d | Disconnect the selected device, which then stays disconnected |
 | x | Forget the device and its pairing, after confirmation |
 | o | Turn the adapter on or off |
@@ -82,11 +83,16 @@ connects as soon as it runs.
 A BLE keyboard, mouse or game controller (HID over GATT, such as a Flipper
 Zero in keyboard mode) is connected by the daemon right after its pairing
 and again whenever it is paired and in range: the daemon reads its report
-map and forwards its reports to the kernel through `/dev/uhid`. `make
-install` installs the udev rule `70-bluetooth-uhid.rules`, which gives that
-device to the user of the active local session (`sudo udevadm control
---reload && sudo udevadm trigger /dev/uhid`, or a new login, applies it).
-Classic devices are not connected yet.
+map and forwards its reports to the kernel through `/dev/uhid`. `make install` installs the udev rule
+`70-bluetooth-uhid.rules`, which gives that device to the user of the active
+local session (`sudo udevadm control --reload && sudo udevadm trigger
+/dev/uhid`, or a new login, applies it).
+
+A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
+negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
+53) and `t` plays a test tone through it, encoded with libsbc and paced in
+real time. Only one audio device is in use at a time, and the audio stream
+is suspended when the tone ends. Audio from applications is not routed yet.
 
 Pairing prompts (confirmation code, PIN of 1 to 16 characters, passkey of up
 to 6 digits) open a dialog in the interface. A device that starts the pairing
