@@ -79,7 +79,8 @@ struct bgpd_mgmt {
 	char prompt[BGPD_PROMPT_SIZE]; /* question of the open prompt */
 	char input[BGPD_INPUT_SIZE];   /* PIN or passkey being typed */
 	const char *state_dir;
-	FILE *trace; /* packet log, or NULL */
+	FILE *trace;	      /* packet log, or NULL */
+	uint64_t trace_start; /* bgpd_now() when the log was opened */
 	struct bgpd_devices devices;
 	struct bgpd_store store;
 };

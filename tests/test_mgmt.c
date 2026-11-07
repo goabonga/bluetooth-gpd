@@ -304,8 +304,8 @@ static void test_trace(const char *dir)
 		return;
 	CHECK(fread(text, 1, sizeof(text) - 1, f) > 0);
 	fclose(f);
-	CHECK(strstr(text, "> 0x0003 hci65535 (0 bytes)") != NULL);
-	CHECK(strstr(text, "< 0x0001") != NULL);
+	CHECK(strstr(text, " ms > 0x0003 hci65535 (0 bytes)") != NULL);
+	CHECK(strstr(text, " ms < 0x0001") != NULL);
 	CHECK(strstr(text, "<hidden>") != NULL); /* keys are not logged */
 	unlink(path);
 }

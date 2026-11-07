@@ -160,8 +160,9 @@ static void trace(const struct bgpd_mgmt *m, const char *direction,
 {
 	if (m->trace == NULL)
 		return;
-	fprintf(m->trace, "%s 0x%04x hci%u (%zu bytes)", direction, code, index,
-		size);
+	fprintf(m->trace, "%8llu ms %s 0x%04x hci%u (%zu bytes)",
+		(unsigned long long)(bgpd_now() - m->trace_start), direction,
+		code, index, size);
 	for (size_t i = 0; i < size && !secret; i++)
 		fprintf(m->trace, " %02x", data[i]);
 	fputs(secret ? " <hidden>\n" : "\n", m->trace);
@@ -174,6 +175,7 @@ int bgpd_mgmt_trace(struct bgpd_mgmt *m, const char *path)
 
 	if (fd < 0)
 		return -1;
+	m->trace_start = bgpd_now();
 	m->trace = fdopen(fd, "w");
 	if (m->trace == NULL) {
 		close(fd);
