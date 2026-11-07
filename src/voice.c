@@ -3,6 +3,8 @@
 
 #include "voice.h"
 
+#include "streams.h"
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,6 +112,23 @@ void bgpd_voice_target(struct bgpd_voice *v, const uint8_t addr[BGPD_ADDR_SIZE],
 void bgpd_voice_no_target(struct bgpd_voice *v)
 {
 	v->has_target = false;
+}
+
+int bgpd_voice_attach(struct bgpd_voice *v, int fd)
+{
+	if (v->state != BGPD_VOICE_IDLE || v->client >= 0 || !v->has_target ||
+	    bgpd_hfp_connect(&v->hfp, v->target, v->target_name) < 0) {
+		bgpd_stream_refuse(fd);
+		return -1;
+	}
+	v->client = fd;
+	v->hello_used = 0;
+	v->deadline = now_ms() + SETUP_TIMEOUT_MS;
+	v->state = BGPD_VOICE_HANDSFREE;
+	snprintf(v->status, sizeof(v->status),
+		 "Starting the headset microphone...");
+	v->changed = true;
+	return 0;
 }
 
 bool bgpd_voice_streaming(const struct bgpd_voice *v)

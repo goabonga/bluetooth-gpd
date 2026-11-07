@@ -287,6 +287,62 @@ static void test_microphone(const char *path)
 	drop_fakes();
 }
 
+/* A client whose greeting was read is given to the microphone. */
+static void test_attach(void)
+{
+	sbc_t encoder;
+	uint8_t rate[4];
+	int16_t heard[4096];
+	size_t samples = 0, frames_sent = 0, got = 0;
+	int step = 0, pair[2];
+	uint64_t start;
+
+	make_fakes();
+	CHECK(sbc_init_msbc(&encoder, 0) == 0);
+
+	/* No headset: refused. */
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, pair) == 0);
+	CHECK(bgpd_voice_attach(&v, pair[0]) == -1);
+	CHECK(read(pair[1], rate, sizeof(rate)) == 4 && rate[0] == 0);
+	close(pair[1]);
+
+	bgpd_voice_target(&v, headset, "Headset");
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, pair) == 0);
+	CHECK(bgpd_voice_attach(&v, pair[0]) == 0);
+	CHECK(v.state == BGPD_VOICE_HANDSFREE);
+	start = now_ms();
+	while (now_ms() - start < 4000 && samples < 1500) {
+		uint8_t bytes[4096];
+		ssize_t n;
+
+		bgpd_voice_poll(&v);
+		headset_side(&encoder, &step, &frames_sent);
+		if (got < 4) {
+			n = read(pair[1], rate + got, 4 - got);
+			if (n > 0)
+				got += (size_t)n;
+		} else {
+			n = read(pair[1], bytes, sizeof(bytes));
+			if (n > 0)
+				samples += (size_t)n / 2;
+		}
+		usleep(1000);
+	}
+	CHECK((unsigned int)rate[0] + 256U * rate[1] + 65536U * rate[2] ==
+	      16000);
+	CHECK(samples >= 1500 && bgpd_voice_streaming(&v));
+	(void)heard;
+	close(pair[1]);
+	for (int i = 0; i < 50; i++) {
+		bgpd_voice_poll(&v);
+		usleep(2000);
+	}
+	CHECK(v.state == BGPD_VOICE_IDLE);
+	sbc_finish(&encoder);
+	bgpd_voice_shutdown(&v);
+	drop_fakes();
+}
+
 int main(void)
 {
 	char dir[] = "/tmp/bgpd-voice-XXXXXX";
@@ -297,6 +353,7 @@ int main(void)
 	snprintf(path, sizeof(path), "%s/capture.sock", dir);
 	test_refused(path);
 	test_microphone(path);
+	test_attach();
 	rmdir(dir);
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
