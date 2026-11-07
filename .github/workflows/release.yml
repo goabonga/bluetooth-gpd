@@ -212,7 +212,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed git github-cli ncurses pkgconf
+        run: pacman -Syu --noconfirm --needed git github-cli ncurses pkgconf sbc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release.outputs.tag }}
