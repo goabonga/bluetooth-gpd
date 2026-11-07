@@ -122,6 +122,7 @@ jobs:
             make clean
             make CC="$cc"
             ./build/bluetooth --version
+            ./build/bluetooth-daemon --version
           done 2>&1 | tee build.txt
       - name: Summary
         if: always()

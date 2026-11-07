@@ -235,7 +235,8 @@ jobs:
           version=${TAG#v}
           name="bluetooth-gpd-${version}-linux-x86_64"
           mkdir -p "dist/${name}"
-          cp build/bluetooth LICENSE README.md "dist/${name}/"
+          cp build/bluetooth build/bluetooth-daemon LICENSE README.md \
+            "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "$name"
           rm -rf "dist/${name}"
           (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
