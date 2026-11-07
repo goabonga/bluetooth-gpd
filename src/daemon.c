@@ -17,6 +17,7 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_init(&daemon->slots[i].hog);
 	bgpd_audio_init(&daemon->audio);
+	bgpd_voice_init(&daemon->voice);
 	daemon->ipc.listener = -1;
 	for (size_t i = 0; i < BGPD_IPC_MAX_CLIENTS; i++)
 		daemon->ipc.peers[i].fd = -1;
@@ -270,6 +271,13 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 	bgpd_mgmt_poll(m);
 	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
 	bgpd_audio_poll(&daemon->audio);
+	/* A capture client gets the microphone of the audio device in use. */
+	if (bgpd_audio_active(&daemon->audio))
+		bgpd_voice_target(&daemon->voice, daemon->audio.avdtp.addr,
+				  daemon->audio.avdtp.name);
+	else
+		bgpd_voice_no_target(&daemon->voice);
+	bgpd_voice_poll(&daemon->voice);
 	publish_audio(daemon);
 	if (daemon->audio.changed) {
 		daemon->audio.changed = false;
@@ -308,7 +316,8 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 
 bool bgpd_daemon_streaming(const struct bgpd_daemon *daemon)
 {
-	return bgpd_audio_streaming(&daemon->audio);
+	return bgpd_audio_streaming(&daemon->audio) ||
+	       bgpd_voice_streaming(&daemon->voice);
 }
 
 size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
@@ -323,6 +332,7 @@ size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 
 void bgpd_daemon_close(struct bgpd_daemon *daemon)
 {
+	bgpd_voice_shutdown(&daemon->voice);
 	bgpd_audio_shutdown(&daemon->audio);
 	bgpd_ipc_server_close(&daemon->ipc);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)

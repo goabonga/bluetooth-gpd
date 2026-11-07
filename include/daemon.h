@@ -18,6 +18,7 @@
 #include "hog.h"
 #include "ipc.h"
 #include "mgmt.h"
+#include "voice.h"
 
 #define BGPD_DAEMON_SLOTS 8
 #define BGPD_DAEMON_RETRY_MS 5000
@@ -36,6 +37,7 @@ struct bgpd_daemon {
 	char logged[BGPD_STATUS_SIZE]; /* the last message written to log */
 	struct bgpd_daemon_slot slots[BGPD_DAEMON_SLOTS];
 	struct bgpd_audio audio; /* the Classic audio device in use */
+	struct bgpd_voice voice; /* its microphone, for capture clients */
 	struct bgpd_ipc_server ipc;
 };
 

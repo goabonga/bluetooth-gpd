@@ -14,7 +14,8 @@
 
 #define USAGE                                                                  \
 	"Usage: bluetooth-daemon [--adapter hci0] [--state-dir DIR] "          \
-	"[--socket PATH] [--audio-socket PATH] [--trace FILE]\n"               \
+	"[--socket PATH] [--audio-socket PATH] [--capture-socket PATH] "       \
+	"[--trace FILE]\n"                                                     \
 	"Keeps the paired Bluetooth devices connected through the Linux "      \
 	"kernel and serves the interfaces on a Unix socket.\n"
 
@@ -65,8 +66,9 @@ int main(int argc, char **argv)
 	struct bgpd_daemon *daemon = calloc(1, sizeof(*daemon));
 	char state_dir[4096];
 	uint16_t adapter = BGPD_NO_INDEX;
-	char socket_path[108], audio_path[108];
-	const char *dir = NULL, *trace = NULL, *sock = NULL, *audio_sock = NULL;
+	char socket_path[108], audio_path[108], capture_path[108];
+	const char *dir = NULL, *trace = NULL, *sock = NULL, *audio_sock = NULL,
+		   *capture_sock = NULL;
 	int status = 0;
 
 	if (m == NULL || daemon == NULL) {
@@ -91,6 +93,9 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--audio-socket") == 0 &&
 			   i + 1 < argc) {
 			audio_sock = argv[++i];
+		} else if (strcmp(argv[i], "--capture-socket") == 0 &&
+			   i + 1 < argc) {
+			capture_sock = argv[++i];
 		} else if (strcmp(argv[i], "--state-dir") == 0 &&
 			   i + 1 < argc) {
 			dir = argv[++i];
@@ -156,6 +161,21 @@ int main(int argc, char **argv)
 	}
 	if (bgpd_audio_listen(&daemon->audio, audio_sock) < 0) {
 		fprintf(stderr, "Socket %s: %s\n", audio_sock, strerror(errno));
+		status = 1;
+		goto done;
+	}
+	if (capture_sock == NULL) {
+		if (bgpd_voice_default_path(capture_path,
+					    sizeof(capture_path)) < 0) {
+			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
+			status = 1;
+			goto done;
+		}
+		capture_sock = capture_path;
+	}
+	if (bgpd_voice_listen(&daemon->voice, capture_sock) < 0) {
+		fprintf(stderr, "Socket %s: %s\n", capture_sock,
+			strerror(errno));
 		status = 1;
 		goto done;
 	}

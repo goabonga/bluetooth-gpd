@@ -134,6 +134,10 @@ static void test_interface(void)
 			command(client, daemon, mirror, BGPD_IPC_CONNECT,
 				classic);
 			CHECK(bgpd_audio_active(&daemon->audio));
+			/* Its microphone is for the capture clients. */
+			CHECK(daemon->voice.has_target);
+			CHECK(memcmp(daemon->voice.target, classic,
+				     BGPD_ADDR_SIZE) == 0);
 			command(client, daemon, mirror, BGPD_IPC_TONE, classic);
 			CHECK(daemon->audio.tone_ms > 0);
 			/* The interface sees the audio device, and sets its
@@ -158,6 +162,7 @@ static void test_interface(void)
 			command(client, daemon, mirror, BGPD_IPC_DISCONNECT,
 				classic);
 			CHECK(!bgpd_audio_active(&daemon->audio));
+			CHECK(!daemon->voice.has_target);
 			close(fake_fds[1]);
 			CHECK(!bgpd_daemon_streaming(daemon));
 		}
