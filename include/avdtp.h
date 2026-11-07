@@ -39,7 +39,8 @@ struct bgpd_avdtp_sbc {
 	unsigned int rate;    /* 44100 or 48000 */
 	uint8_t channel_mode; /* 8 mono, 4 dual, 2 stereo, 1 joint stereo */
 	uint8_t bitpool;
-	bool loudness; /* loudness allocation, else SNR */
+	bool loudness;	 /* loudness allocation, else SNR */
+	uint8_t info[4]; /* the A2DP SBC codec information, as configured */
 };
 
 struct bgpd_avdtp {

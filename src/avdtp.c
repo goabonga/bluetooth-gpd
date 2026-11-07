@@ -257,6 +257,7 @@ static void configure(struct bgpd_avdtp *a)
 			       (a->sbc.loudness ? SBC_LOUDNESS : SBC_SNR));
 	payload[10] = a->sbc.bitpool;
 	payload[11] = a->sbc.bitpool;
+	memcpy(a->sbc.info, payload + 8, sizeof(a->sbc.info));
 	a->state = BGPD_AVDTP_CONFIGURE;
 	send_signal(a, SIG_SET_CONFIGURATION, payload, sizeof(payload));
 }

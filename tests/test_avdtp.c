@@ -122,6 +122,7 @@ static void test_stream(void)
 	expect(0x03, config, sizeof(config));
 	CHECK(a.sbc.rate == 44100 && a.sbc.channel_mode == 1 &&
 	      a.sbc.bitpool == 53 && a.sbc.loudness);
+	CHECK(memcmp(a.sbc.info, config + 8, 4) == 0);
 	answer(2, NULL, 0);
 	expect(0x06, &seid2, 1);
 	answer(2, NULL, 0);
