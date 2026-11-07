@@ -7,14 +7,11 @@
  * Owns an AVDTP connection (see avdtp.h), encodes PCM audio with libsbc
  * and sends it in real time. The stream starts when there is audio to play
  * and is suspended when it ends. The audio is a test tone, played with
- * bgpd_audio_tone() and generated on demand, or the PCM of a client of the
- * audio socket (the ALSA plugin).
- *
- * Audio socket protocol: the client sends "BGPDPCM1"; the daemon answers
- * with the sample rate (4 bytes, little-endian) of the stream, or 0 when
- * no audio device is ready, and closes. Then the client sends signed 16-bit
- * little-endian stereo PCM at that rate, and the daemon takes it at the
- * speed of the stream: a client that writes too fast waits.
+ * bgpd_audio_tone() and generated on demand, or the PCM of a client given
+ * by bgpd_audio_attach() (the ALSA plugin, see streams.h for how it gets
+ * here): signed 16-bit little-endian stereo PCM at the rate of the stream,
+ * taken at the speed of the stream, so that a client that writes too fast
+ * waits.
  */
 #ifndef BGPD_AUDIO_H
 #define BGPD_AUDIO_H
@@ -25,8 +22,6 @@
 #include "avrcp.h"
 
 #define BGPD_AUDIO_RING 131072U
-#define BGPD_AUDIO_HELLO "BGPDPCM1"
-#define BGPD_AUDIO_HELLO_SIZE 8U
 
 struct bgpd_audio {
 	struct bgpd_avdtp avdtp;
@@ -44,11 +39,8 @@ struct bgpd_audio {
 	bool avrcp_tried;   /* the control channel was opened for this device */
 	uint32_t tone_ms;   /* test tone asked for, until the stream starts */
 	uint32_t tone_left; /* samples of test tone still to play */
-	uint32_t tone_phase;  /* position in the tone, in samples */
-	int listener, client; /* audio socket, and the client being served */
-	char hello[BGPD_AUDIO_HELLO_SIZE];
-	size_t hello_used;
-	char path[108];
+	uint32_t tone_phase; /* position in the tone, in samples */
+	int client;	     /* the client whose PCM is played, or -1 */
 	uint8_t ring[BGPD_AUDIO_RING]; /* PCM received, not yet encoded */
 	size_t ring_head, ring_used;
 	char status[BGPD_AVDTP_STATUS_SIZE];
@@ -56,12 +48,6 @@ struct bgpd_audio {
 };
 
 void bgpd_audio_init(struct bgpd_audio *audio);
-
-/* Listens for the PCM clients on a Unix socket only its owner can use. */
-int bgpd_audio_listen(struct bgpd_audio *audio, const char *path);
-
-/* $XDG_RUNTIME_DIR/bluetooth-audio.sock; -1 when there is no such directory. */
-int bgpd_audio_default_path(char *buffer, size_t size);
 
 /*
  * Sets the volume, 0 to 100: on the device when it has an absolute volume
@@ -98,8 +84,5 @@ bool bgpd_audio_streaming(const struct bgpd_audio *audio);
 
 /* Stops the stream and closes the connection to the device. */
 void bgpd_audio_close(struct bgpd_audio *audio);
-
-/* Also closes the audio socket and removes it. */
-void bgpd_audio_shutdown(struct bgpd_audio *audio);
 
 #endif /* BGPD_AUDIO_H */

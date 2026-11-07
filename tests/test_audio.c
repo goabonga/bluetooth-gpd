@@ -117,119 +117,6 @@ static unsigned int decode_media(sbc_t *decoder, unsigned int *crossings,
 	return frames;
 }
 
-/* PCM sent by a client of the audio socket reaches the headset. */
-static void test_client(void)
-{
-	static const uint8_t endpoints[] = {0x08, 0x08};
-	static const uint8_t caps[] = {1, 0, 7, 6, 0, 0, 0x3f, 0xff, 2, 64};
-	char dir[] = "/tmp/bgpd-audio-XXXXXX";
-	char path[100];
-	struct sockaddr_un address = {.sun_family = AF_UNIX};
-	int sig[2], media[2], client, refused;
-	uint8_t reply[4];
-	int16_t pcm[2 * 441];
-	unsigned int frames = 0, crossings = 0;
-	int peak = 0;
-	sbc_t decoder;
-	uint64_t start;
-
-	if (mkdtemp(dir) == NULL) {
-		CHECK(!"temporary directory");
-		return;
-	}
-	snprintf(path, sizeof(path), "%s/audio.sock", dir);
-	snprintf(address.sun_path, sizeof(address.sun_path), "%s", path);
-	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sig) == 0);
-	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, media) ==
-	      0);
-	channels[0] = sig[0];
-	channels[1] = media[0];
-	sink_sig = sig[1];
-	sink_media = media[1];
-	next_channel = 0;
-	bgpd_audio_init(&audio);
-	audio.avdtp.open_channel = open_channel;
-	CHECK(bgpd_audio_listen(&audio, path) == 0);
-	bgpd_audio_set_volume(&audio, 50);
-
-	/* Without a device ready, the client is refused with the rate 0. */
-	refused = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (refused < 0)
-		return;
-	CHECK(connect(refused, (struct sockaddr *)&address, sizeof(address)) ==
-	      0);
-	bgpd_audio_poll(&audio);
-	CHECK(read(refused, reply, sizeof(reply)) == 4 && reply[0] == 0);
-	close(refused);
-
-	CHECK(bgpd_audio_connect(&audio, headset, "Headset") == 0);
-	bgpd_audio_poll(&audio);
-	serve_command(endpoints, sizeof(endpoints));
-	serve_command(caps, sizeof(caps));
-	serve_command(NULL, 0);
-	serve_command(NULL, 0);
-	bgpd_audio_poll(&audio);
-	CHECK(audio.avdtp.state == BGPD_AVDTP_READY);
-
-	client = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (client < 0)
-		return;
-	CHECK(connect(client, (struct sockaddr *)&address, sizeof(address)) ==
-	      0);
-	CHECK(write(client, "BGPDPCM1", 8) == 8);
-	for (int i = 0; i < 20; i++) {
-		bgpd_audio_poll(&audio);
-		usleep(2000);
-	}
-	CHECK(read(client, reply, sizeof(reply)) == 4);
-	CHECK((unsigned int)reply[0] + 256U * reply[1] + 65536U * reply[2] ==
-	      44100U);
-
-	/* 10 ms blocks of a 1 kHz tone, 200 ms in all. */
-	for (int block = 0; block < 20; block++) {
-		for (int i = 0; i < 441; i++) {
-			double angle = 2.0 * 3.14159265358979 * 1000.0 *
-				       (block * 441 + i) / 44100.0;
-
-			pcm[(size_t)i * 2] = (int16_t)(8000.0 * sin(angle));
-			pcm[(size_t)i * 2 + 1] = pcm[(size_t)i * 2];
-		}
-		CHECK(write(client, pcm, sizeof(pcm)) == (ssize_t)sizeof(pcm));
-	}
-	CHECK(sbc_init(&decoder, 0) == 0);
-	decoder.endian = SBC_LE;
-	start = now_ms();
-	for (int i = 0; i < 200 && now_ms() - start < 2000; i++) {
-		bgpd_audio_poll(&audio);
-		accept_pending();
-		frames += decode_media(&decoder, &crossings, &peak);
-		usleep(2000);
-		if (i == 20)
-			close(client); /* the client leaves after a while */
-	}
-	/* 200 ms are 68 frames; the last partial frame is not sent. */
-	CHECK(frames >= 66 && frames <= 69);
-	/* 1 kHz crosses zero 2000 times a second: 400 in 200 ms. */
-	CHECK(crossings > 370 && crossings < 430);
-	/* At 50 % the gain is -25 dB: 8000 becomes about 440. */
-	CHECK(peak > 380 && peak < 500);
-	/* With the client gone and the audio played, the stream is suspended.
-	 */
-	for (int i = 0; i < 100 && audio.avdtp.state != BGPD_AVDTP_READY; i++) {
-		accept_pending();
-		bgpd_audio_poll(&audio);
-		usleep(2000);
-	}
-	CHECK(audio.avdtp.state == BGPD_AVDTP_READY);
-
-	sbc_finish(&decoder);
-	bgpd_audio_shutdown(&audio);
-	CHECK(access(path, F_OK) == -1);
-	close(sink_sig);
-	close(sink_media);
-	rmdir(dir);
-}
-
 static int avrcp_end;
 
 static int open_avrcp_none(const uint8_t addr[BGPD_ADDR_SIZE])
@@ -359,6 +246,7 @@ static void test_attach(void)
 	bgpd_audio_init(&audio);
 	audio.avdtp.open_channel = open_channel;
 	audio.avrcp.open_channel = open_avrcp_none;
+	bgpd_audio_set_volume(&audio, 50);
 
 	/* Not connected yet: refused with the rate 0. */
 	CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
@@ -405,9 +293,10 @@ static void test_attach(void)
 		frames += decode_media(&decoder, &crossings, &peak);
 		usleep(2000);
 	}
-	/* 100 ms are 34 frames; the sound is at full level (volume 100). */
+	/* 100 ms are 34 frames; at 50 % the gain is -25 dB: 8000 becomes
+	 * about 440. */
 	CHECK(frames >= 32 && frames <= 35);
-	CHECK(peak > 7000 && peak < 9000);
+	CHECK(peak > 380 && peak < 500);
 	sbc_finish(&decoder);
 	bgpd_audio_close(&audio);
 	close(sink_sig);
@@ -517,7 +406,6 @@ int main(void)
 		fprintf(stderr, "%d check(s) failed\n", failures);
 		return 1;
 	}
-	test_client();
 	test_hardware_volume();
 	test_attach();
 	if (failures) {

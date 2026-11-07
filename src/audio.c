@@ -34,7 +34,7 @@ static uint64_t now_ms(void)
 void bgpd_audio_init(struct bgpd_audio *audio)
 {
 	memset(audio, 0, sizeof(*audio));
-	audio->listener = audio->client = -1;
+	audio->client = -1;
 	audio->volume = 100;
 	bgpd_avdtp_init(&audio->avdtp);
 	bgpd_avrcp_init(&audio->avrcp);
@@ -50,118 +50,11 @@ bool bgpd_audio_streaming(const struct bgpd_audio *audio)
 	return audio->avdtp.state == BGPD_AVDTP_STREAMING;
 }
 
-int bgpd_audio_default_path(char *buffer, size_t size)
-{
-	const char *dir = getenv("XDG_RUNTIME_DIR");
-	int length;
-
-	if (dir == NULL || dir[0] != '/') {
-		errno = ENOENT;
-		return -1;
-	}
-	length = snprintf(buffer, size, "%s/bluetooth-audio.sock", dir);
-	if (length < 0 || (size_t)length >= size ||
-	    (size_t)length >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
-		errno = ENAMETOOLONG;
-		return -1;
-	}
-	return 0;
-}
-
-int bgpd_audio_listen(struct bgpd_audio *audio, const char *path)
-{
-	struct sockaddr_un address = {.sun_family = AF_UNIX};
-	int fd, saved;
-
-	if (strlen(path) >= sizeof(address.sun_path)) {
-		errno = ENAMETOOLONG;
-		return -1;
-	}
-	memcpy(address.sun_path, path, strlen(path) + 1);
-	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-	if (fd < 0)
-		return -1;
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-		int probe;
-		bool alive;
-
-		if (errno != EADDRINUSE)
-			goto fail;
-		/* A socket left by a stopped daemon is replaced. */
-		probe = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-		alive =
-		    probe >= 0 && connect(probe, (struct sockaddr *)&address,
-					  sizeof(address)) == 0;
-		if (probe >= 0)
-			close(probe);
-		if (alive) {
-			errno = EADDRINUSE;
-			goto fail;
-		}
-		unlink(path);
-		if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0)
-			goto fail;
-	}
-	if (chmod(path, S_IRUSR | S_IWUSR) < 0 || listen(fd, 2) < 0) {
-		saved = errno;
-		unlink(path);
-		errno = saved;
-		goto fail;
-	}
-	audio->listener = fd;
-	snprintf(audio->path, sizeof(audio->path), "%s", path);
-	return 0;
-fail:
-	saved = errno;
-	close(fd);
-	errno = saved;
-	return -1;
-}
-
 static void drop_client(struct bgpd_audio *audio)
 {
 	if (audio->client >= 0)
 		close(audio->client);
 	audio->client = -1;
-	audio->hello_used = 0;
-}
-
-/* Takes the new clients: only one at a time, and only when a sink is ready. */
-static void accept_client(struct bgpd_audio *audio)
-{
-	for (;;) {
-		struct ucred cred;
-		socklen_t length = sizeof(cred);
-		int fd = accept4(audio->listener, NULL, NULL,
-				 SOCK_NONBLOCK | SOCK_CLOEXEC);
-		bool ready;
-
-		if (fd < 0 && errno == EINTR)
-			continue;
-		if (fd < 0)
-			return;
-		if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) <
-			0 ||
-		    cred.uid != geteuid()) {
-			close(fd);
-			continue;
-		}
-		ready = audio->client < 0 &&
-			audio->avdtp.state >= BGPD_AVDTP_READY &&
-			audio->avdtp.sbc.rate != 0;
-		if (ready) {
-			audio->client = fd;
-			audio->hello_used = 0;
-		} else {
-			/* The rate 0 refuses the stream. */
-			static const uint8_t refused[4] = {0};
-			ssize_t n = send(fd, refused, sizeof(refused),
-					 MSG_NOSIGNAL | MSG_DONTWAIT);
-
-			(void)n;
-			close(fd);
-		}
-	}
 }
 
 int bgpd_audio_attach(struct bgpd_audio *audio, int fd)
@@ -173,31 +66,23 @@ int bgpd_audio_attach(struct bgpd_audio *audio, int fd)
 		return -1;
 	}
 	audio->client = fd;
-	audio->hello_used = BGPD_AUDIO_HELLO_SIZE; /* the greeting was read */
 	return 0;
 }
 
-/* Reads the greeting, answers it, then takes the PCM into the ring. */
+/* Takes the PCM the client sent into the ring. */
 static void read_client(struct bgpd_audio *audio)
 {
 	while (audio->client >= 0) {
+		size_t tail =
+		    (audio->ring_head + audio->ring_used) % BGPD_AUDIO_RING;
+		size_t room = BGPD_AUDIO_RING - audio->ring_used;
 		ssize_t n;
 
-		if (audio->hello_used < BGPD_AUDIO_HELLO_SIZE) {
-			n = read(audio->client,
-				 audio->hello + audio->hello_used,
-				 BGPD_AUDIO_HELLO_SIZE - audio->hello_used);
-		} else {
-			size_t tail = (audio->ring_head + audio->ring_used) %
-				      BGPD_AUDIO_RING;
-			size_t room = BGPD_AUDIO_RING - audio->ring_used;
-
-			if (room == 0)
-				return; /* the client waits */
-			if (room > BGPD_AUDIO_RING - tail)
-				room = BGPD_AUDIO_RING - tail;
-			n = read(audio->client, audio->ring + tail, room);
-		}
+		if (room == 0)
+			return; /* the client waits */
+		if (room > BGPD_AUDIO_RING - tail)
+			room = BGPD_AUDIO_RING - tail;
+		n = read(audio->client, audio->ring + tail, room);
 		if (n < 0 && errno == EINTR)
 			continue;
 		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
@@ -206,31 +91,7 @@ static void read_client(struct bgpd_audio *audio)
 			drop_client(audio);
 			return;
 		}
-		if (audio->hello_used < BGPD_AUDIO_HELLO_SIZE) {
-			audio->hello_used += (size_t)n;
-			if (audio->hello_used < BGPD_AUDIO_HELLO_SIZE)
-				continue;
-			if (memcmp(audio->hello, BGPD_AUDIO_HELLO,
-				   BGPD_AUDIO_HELLO_SIZE) != 0) {
-				drop_client(audio);
-				return;
-			}
-			{
-				uint8_t rate[4];
-				unsigned int value = audio->avdtp.sbc.rate;
-
-				for (unsigned int i = 0; i < 4; i++)
-					rate[i] = (uint8_t)(value >> (8U * i));
-				if (send(audio->client, rate, sizeof(rate),
-					 MSG_NOSIGNAL | MSG_DONTWAIT) !=
-				    (ssize_t)sizeof(rate)) {
-					drop_client(audio);
-					return;
-				}
-			}
-		} else {
-			audio->ring_used += (size_t)n;
-		}
+		audio->ring_used += (size_t)n;
 	}
 }
 
@@ -250,16 +111,6 @@ void bgpd_audio_close(struct bgpd_audio *audio)
 	audio->tone_ms = audio->tone_left = 0;
 	drop_client(audio);
 	audio->ring_head = audio->ring_used = 0;
-}
-
-void bgpd_audio_shutdown(struct bgpd_audio *audio)
-{
-	bgpd_audio_close(audio);
-	if (audio->listener >= 0) {
-		close(audio->listener);
-		unlink(audio->path);
-	}
-	audio->listener = -1;
 }
 
 int bgpd_audio_connect(struct bgpd_audio *audio,
@@ -428,8 +279,6 @@ void bgpd_audio_poll(struct bgpd_audio *audio)
 		audio->changed = true;
 		a->changed = false;
 	}
-	if (audio->listener >= 0)
-		accept_client(audio);
 	read_client(audio);
 	/* The control channel gives the volume of the device, when it has one.
 	 */
