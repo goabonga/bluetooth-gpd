@@ -57,6 +57,7 @@ static void run(struct bgpd_ui *ui)
 
 		if (!ui->demo)
 			bgpd_mgmt_poll(m);
+		bgpd_ui_poll(ui);
 		bgpd_ui_draw(ui);
 		key = getch();
 		if (key != ERR && key != KEY_RESIZE && !bgpd_ui_key(ui, key))
@@ -156,6 +157,7 @@ int main(int argc, char **argv)
 	bgpd_ui_init(ui, m, demo);
 	run(ui);
 	endwin();
+	bgpd_hog_close(&ui->hog);
 done:
 	bgpd_mgmt_close(m);
 	free(ui);
