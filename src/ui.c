@@ -195,6 +195,9 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 			 ctui_attr(CTUI_PAIR_MUTED, false));
 	else
 		ctui_table_draw(&ui->table, 4, 1, COLS - 2, LINES - 8);
+	if (m->warning[0] != '\0')
+		ctui_put(LINES - 4, 1, COLS - 2, m->warning,
+			 ctui_attr(CTUI_PAIR_ERROR, true));
 	ctui_put(LINES - 3, 1, COLS - 2, m->status, body);
 	ctui_put(LINES - 2, 1, COLS - 2, hints,
 		 ctui_attr(CTUI_PAIR_MUTED, false));
