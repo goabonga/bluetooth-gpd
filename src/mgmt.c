@@ -45,6 +45,15 @@ struct sockaddr_hci {
 #define EV_DEVICE_FOUND 0x0012
 #define EV_DISCOVERING 0x0013
 #define EV_NEW_IRK 0x0018
+#define EV_PIN_REQUEST 0x000e
+#define EV_USER_CONFIRM 0x000f
+#define EV_USER_PASSKEY 0x0010
+#define EV_AUTH_FAILED 0x0011
+#define EV_PASSKEY_NOTIFY 0x0017
+
+#define PAIR_TIMEOUT_MS 120000
+#define IO_CAPABILITY_KEYBOARD_DISPLAY 4
+#define SECURE_PIN_LENGTH 16
 
 #define STATUS_OPERATION_NOT_ALLOWED_OFF 0x0f /* adapter is powered off */
 #define COMMAND_TIMEOUT_MS 10000
@@ -325,10 +334,61 @@ static void prepare_scan(struct bgpd_mgmt *m)
 	command(m, BGPD_OP_START_DISCOVERY, &m->scan_type, 1);
 }
 
+static void start_pair(struct bgpd_mgmt *m)
+{
+	uint8_t data[8];
+
+	memcpy(data, m->pair_addr, BGPD_ADDR_SIZE);
+	data[7] = IO_CAPABILITY_KEYBOARD_DISPLAY;
+	if (command(m, BGPD_OP_PAIR, data, sizeof(data)) < 0)
+		m->pairing = false;
+	else
+		m->deadline = bgpd_now() + PAIR_TIMEOUT_MS;
+}
+
+/* Enables what pairing needs (transport, bondable, SSP), one step a time. */
+static void prepare_pair(struct bgpd_mgmt *m)
+{
+	uint32_t bit = m->pair_addr[6] != 0 ? SETTING_LE : SETTING_BREDR;
+	uint8_t on = 1;
+
+	if ((m->supported & bit) == 0) {
+		m->prepare_action = 0;
+		m->pairing = false;
+		say(m, "Unsupported transport");
+		return;
+	}
+	if ((m->settings & bit) == 0) {
+		command(m, m->pair_addr[6] != 0 ? BGPD_OP_LE : BGPD_OP_BREDR,
+			&on, 1);
+		return;
+	}
+	if ((m->settings & SETTING_BONDABLE) == 0) {
+		command(m, BGPD_OP_BONDABLE, &on, 1);
+		return;
+	}
+	if (m->pair_addr[6] == BGPD_ADDR_BREDR &&
+	    (m->supported & SETTING_SSP) != 0 &&
+	    (m->settings & SETTING_SSP) == 0) {
+		command(m, BGPD_OP_SSP, &on, 1);
+		return;
+	}
+	m->prepare_action = 0;
+	start_pair(m);
+}
+
 static void prepare(struct bgpd_mgmt *m)
 {
 	if (m->prepare_action == BGPD_OP_START_DISCOVERY)
 		prepare_scan(m);
+	else if (m->prepare_action == BGPD_OP_PAIR)
+		prepare_pair(m);
+}
+
+static void clear_prompt(struct bgpd_mgmt *m)
+{
+	m->prompt_kind = BGPD_PROMPT_NONE;
+	m->prompt[0] = m->input[0] = '\0';
 }
 
 void bgpd_mgmt_scan(struct bgpd_mgmt *m)
@@ -345,6 +405,51 @@ void bgpd_mgmt_scan(struct bgpd_mgmt *m)
 	}
 	m->prepare_action = BGPD_OP_START_DISCOVERY;
 	prepare(m);
+}
+
+void bgpd_mgmt_pair(struct bgpd_mgmt *m, const struct bgpd_device *device)
+{
+	if (!m->ready || m->command != 0 || m->pairing)
+		return;
+	if ((m->settings & SETTING_POWERED) == 0) {
+		say(m, "Turn the adapter on first");
+		return;
+	}
+	if (device->paired) {
+		say(m, "Already paired");
+		return;
+	}
+	memcpy(m->pair_addr, device->addr, BGPD_ADDR_SIZE);
+	memcpy(m->pair_original, device->addr, BGPD_ADDR_SIZE);
+	m->pairing = true;
+	m->prepare_action = BGPD_OP_PAIR;
+	prepare(m);
+}
+
+void bgpd_mgmt_cancel_pair(struct bgpd_mgmt *m)
+{
+	if (m->pairing)
+		send_command(m, BGPD_OP_CANCEL_PAIR, m->index, m->pair_original,
+			     BGPD_ADDR_SIZE);
+}
+
+void bgpd_mgmt_unpair(struct bgpd_mgmt *m, const struct bgpd_device *device)
+{
+	uint8_t data[8];
+
+	if (!m->ready || m->command != 0)
+		return;
+	memcpy(data, device->addr, BGPD_ADDR_SIZE);
+	data[7] = 1; /* disconnect the device too */
+	memcpy(m->unpair_addr, device->addr, BGPD_ADDR_SIZE);
+	command(m, BGPD_OP_UNPAIR, data, sizeof(data));
+}
+
+void bgpd_mgmt_disconnect(struct bgpd_mgmt *m, const struct bgpd_device *device)
+{
+	if (!m->ready || m->command != 0)
+		return;
+	command(m, BGPD_OP_DISCONNECT, device->addr, BGPD_ADDR_SIZE);
 }
 
 void bgpd_mgmt_toggle_power(struct bgpd_mgmt *m)
@@ -471,6 +576,8 @@ static void on_connections(struct bgpd_mgmt *m, const uint8_t *p, size_t size,
 	say(m, "Kernel MGMT ready: s scan");
 }
 
+static void forget(struct bgpd_mgmt *m, const uint8_t *addr);
+
 static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 		     const uint8_t *p, size_t size)
 {
@@ -491,6 +598,10 @@ static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 		}
 		m->prepare_action = 0;
 		say(m, "MGMT 0x%04x: %s", op, error_name(code));
+		if (m->pairing) {
+			m->pairing = false;
+			clear_prompt(m);
+		}
 		return;
 	}
 	switch (op) {
@@ -533,6 +644,40 @@ static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 		else
 			say(m, "MGMT 0x%04x: OK", op);
 		break;
+	case BGPD_OP_PAIR: {
+		struct bgpd_device *d;
+
+		if (size < BGPD_ADDR_SIZE) {
+			ok = false;
+			break;
+		}
+		d = bgpd_devices_get(&m->devices, p);
+		if (d != NULL)
+			d->paired = true;
+		m->pairing = false;
+		clear_prompt(m);
+		say(m, "Pairing successful%s",
+		    m->storage_error ? "; ERROR saving keys"
+		    : d != NULL && d->saved
+			? "; keys saved"
+			: "; temporary bond without a persistent key");
+		break;
+	}
+	case BGPD_OP_UNPAIR:
+		forget(m, m->unpair_addr);
+		if (!m->storage_error)
+			say(m, "Device forgotten");
+		break;
+	case BGPD_OP_DISCONNECT: {
+		struct bgpd_device *d = size >= BGPD_ADDR_SIZE
+					    ? bgpd_devices_get(&m->devices, p)
+					    : NULL;
+
+		if (d != NULL)
+			d->connected = false;
+		say(m, "Disconnected");
+		break;
+	}
 	case BGPD_OP_START_DISCOVERY:
 		m->own_scan = m->scanning = true;
 		say(m, "Scanning");
@@ -547,6 +692,8 @@ static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 	}
 	if (!ok) {
 		m->prepare_action = 0;
+		m->pairing = false;
+		clear_prompt(m);
 		say(m, "Truncated MGMT 0x%04x response", op);
 	}
 }
@@ -588,8 +735,9 @@ static void on_index_removed(struct bgpd_mgmt *m, uint16_t index)
 	}
 	if (index != m->index)
 		return;
-	m->ready = m->own_scan = m->scanning = false;
+	m->ready = m->own_scan = m->scanning = m->pairing = false;
 	m->command = 0;
+	clear_prompt(m);
 	say(m, "Adapter removed; a to refresh");
 }
 
@@ -620,6 +768,114 @@ static void forget(struct bgpd_mgmt *m, const uint8_t *addr)
 	d = bgpd_devices_get(&m->devices, addr);
 	if (d != NULL)
 		d->paired = d->saved = d->connected = false;
+}
+
+/*
+ * A device that pairs with a random address announces its identity
+ * address: the entry of the random one moves to the identity.
+ */
+static void on_new_irk(struct bgpd_mgmt *m, const uint8_t *p)
+{
+	struct bgpd_device *old = NULL, *identity;
+
+	for (size_t i = 0; i < m->devices.count; i++) {
+		struct bgpd_device *d = &m->devices.items[i];
+
+		if (d->addr[6] == BGPD_ADDR_LE_RANDOM &&
+		    memcmp(d->addr, p + 1, 6) == 0)
+			old = d;
+	}
+	identity = bgpd_devices_get(&m->devices, p + 7);
+	if (old != NULL && identity != NULL && old != identity) {
+		snprintf(identity->name, sizeof(identity->name), "%s",
+			 old->name);
+		old->paired = old->saved = false;
+	}
+	if (m->pairing && m->pair_addr[6] == BGPD_ADDR_LE_RANDOM &&
+	    memcmp(m->pair_addr, p + 1, 6) == 0)
+		memcpy(m->pair_addr, p + 7, BGPD_ADDR_SIZE);
+	if (p[0] != 0)
+		on_key(m, BGPD_KEY_IRK, p + 7, 23);
+}
+
+/* Turns a PIN, confirmation or passkey request into a prompt. */
+static void on_auth_request(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
+			    const uint8_t *p, size_t size)
+{
+	const size_t sizes[] = {8, 12, 7}; /* PIN, confirmation, passkey */
+	char address[BGPD_ADDR_TEXT];
+
+	if (size != sizes[event - EV_PIN_REQUEST])
+		return;
+	if (!m->pairing || memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) != 0) {
+		/* Unsolicited requests are refused. */
+		uint16_t no = event == EV_PIN_REQUEST ? BGPD_OP_PIN_NEGATIVE
+			      : event == EV_USER_PASSKEY
+				  ? BGPD_OP_PASSKEY_NEGATIVE
+				  : BGPD_OP_CONFIRM_NEGATIVE;
+
+		send_command(m, no, index, p, BGPD_ADDR_SIZE);
+		return;
+	}
+	m->prompt_kind = event;
+	memcpy(m->prompt_addr, p, BGPD_ADDR_SIZE);
+	m->input[0] = '\0';
+	bgpd_address_format(p, address);
+	m->secure_pin = event == EV_PIN_REQUEST && p[7] != 0;
+	if (event == EV_USER_CONFIRM && p[7] != 0)
+		snprintf(m->prompt, sizeof(m->prompt), "Pair %s? [y/n]",
+			 address);
+	else if (event == EV_USER_CONFIRM)
+		snprintf(m->prompt, sizeof(m->prompt),
+			 "%s: confirm %06u? [y/n]", address, bgpd_get32(p + 8));
+	else
+		snprintf(m->prompt, sizeof(m->prompt),
+			 "%s: %s; Enter accepts, Esc rejects", address,
+			 event == EV_USER_PASSKEY ? "passkey: 1-6 digits"
+			 : m->secure_pin	  ? "PIN: 16 characters"
+						  : "PIN: 1-16 characters");
+}
+
+void bgpd_mgmt_reply(struct bgpd_mgmt *m, bool accept)
+{
+	uint8_t data[24] = {0};
+	size_t size = BGPD_ADDR_SIZE;
+	uint16_t op;
+
+	if (m->prompt_kind == BGPD_PROMPT_NONE)
+		return;
+	memcpy(data, m->prompt_addr, BGPD_ADDR_SIZE);
+	if (m->prompt_kind == BGPD_PROMPT_PIN) {
+		size_t length = strlen(m->input);
+
+		op = accept ? BGPD_OP_PIN_REPLY : BGPD_OP_PIN_NEGATIVE;
+		if (accept) {
+			if (length == 0 ||
+			    (m->secure_pin && length != SECURE_PIN_LENGTH)) {
+				say(m, "Secure PIN: 16 characters required");
+				return;
+			}
+			data[7] = (uint8_t)length;
+			memcpy(data + 8, m->input, length);
+			size = sizeof(data);
+		}
+	} else if (m->prompt_kind == BGPD_PROMPT_PASSKEY) {
+		op = accept ? BGPD_OP_PASSKEY : BGPD_OP_PASSKEY_NEGATIVE;
+		if (accept) {
+			uint32_t value = 0;
+
+			if (m->input[0] == '\0')
+				return;
+			for (const char *c = m->input; *c != '\0'; c++)
+				value = value * 10U + (uint32_t)(*c - '0');
+			bgpd_put32(data + 7, value);
+			size = 11;
+		}
+	} else {
+		op = accept ? BGPD_OP_CONFIRM : BGPD_OP_CONFIRM_NEGATIVE;
+	}
+	if (send_command(m, op, m->index, data, size) == 0)
+		clear_prompt(m);
 }
 
 static void on_event(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
@@ -677,8 +933,26 @@ static void on_event(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
 			on_key(m, BGPD_KEY_LTK, p + 1, 36);
 		break;
 	case EV_NEW_IRK:
-		if (size == 30 && p[0] != 0)
-			on_key(m, BGPD_KEY_IRK, p + 7, 23);
+		if (size == 30)
+			on_new_irk(m, p);
+		break;
+	case EV_PIN_REQUEST:
+	case EV_USER_CONFIRM:
+	case EV_USER_PASSKEY:
+		on_auth_request(m, event, index, p, size);
+		break;
+	case EV_PASSKEY_NOTIFY:
+		if (size == 12 && m->pairing &&
+		    memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) == 0)
+			say(m, "Enter %06u on the device (%u digits entered)",
+			    bgpd_get32(p + 7), p[11]);
+		break;
+	case EV_AUTH_FAILED:
+		if (size == 8 && m->pairing &&
+		    memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) == 0) {
+			clear_prompt(m);
+			say(m, "Authentication: %s", error_name(p[7]));
+		}
 		break;
 	default:
 		break;
@@ -732,6 +1006,9 @@ void bgpd_mgmt_poll(struct bgpd_mgmt *m)
 		bgpd_mgmt_packet(m, data, (size_t)n);
 	}
 	if (m->command != 0 && bgpd_now() > m->deadline) {
+		bgpd_mgmt_cancel_pair(m);
+		m->pairing = false;
+		clear_prompt(m);
 		m->command = 0;
 		m->prepare_action = 0;
 		say(m, "MGMT timeout");
@@ -741,6 +1018,9 @@ void bgpd_mgmt_poll(struct bgpd_mgmt *m)
 void bgpd_mgmt_close(struct bgpd_mgmt *m)
 {
 	if (m->fd >= 0) {
+		if (m->prompt_kind != BGPD_PROMPT_NONE)
+			bgpd_mgmt_reply(m, false);
+		bgpd_mgmt_cancel_pair(m);
 		if (m->own_scan)
 			send_command(m, BGPD_OP_STOP_DISCOVERY, m->index,
 				     &m->scan_type, 1);

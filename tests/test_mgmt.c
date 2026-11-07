@@ -169,6 +169,109 @@ static void test_keys(void)
 	CHECK(d != NULL && !d->paired && !d->saved && m->store.count == 0);
 }
 
+static void request(uint16_t type, uint8_t flag, uint32_t value)
+{
+	uint8_t data[12] = {0};
+
+	memcpy(data, remote, BGPD_ADDR_SIZE);
+	data[7] = flag;
+	bgpd_put32(data + 8, value);
+	event(type, m->index, data, type == 0x0f ? 12 : type == 0x0e ? 8 : 7);
+}
+
+static void test_pairing(void)
+{
+	struct bgpd_device *d = bgpd_devices_get(&m->devices, remote);
+	uint8_t other[BGPD_ADDR_SIZE] = {9, 9, 9, 9, 9, 9, BGPD_ADDR_BREDR};
+	uint8_t done[BGPD_ADDR_SIZE + 1];
+
+	CHECK(d != NULL);
+	if (d == NULL)
+		return;
+	bgpd_mgmt_pair(m, d);
+	CHECK(expect(BGPD_OP_PAIR) == 8 && packet[6 + 7] == 4);
+	CHECK(m->pairing);
+
+	/* A request from another device is refused. */
+	event(0x0f, m->index, (uint8_t[12]){9, 9, 9, 9, 9, 9, 0}, 12);
+	CHECK(expect(BGPD_OP_CONFIRM_NEGATIVE) == BGPD_ADDR_SIZE);
+	CHECK(m->prompt_kind == BGPD_PROMPT_NONE);
+
+	request(0x0f, 0, 123456);
+	CHECK(m->prompt_kind == BGPD_PROMPT_CONFIRM);
+	CHECK(strstr(m->prompt, "123456") != NULL);
+	bgpd_mgmt_reply(m, true);
+	CHECK(expect(BGPD_OP_CONFIRM) == BGPD_ADDR_SIZE);
+	CHECK(m->prompt_kind == BGPD_PROMPT_NONE);
+
+	request(0x10, 0, 0);
+	snprintf(m->input, sizeof(m->input), "042");
+	bgpd_mgmt_reply(m, true);
+	CHECK(expect(BGPD_OP_PASSKEY) == 11 &&
+	      bgpd_get32(packet + 6 + 7) == 42);
+
+	request(0x0e, 1, 0);
+	snprintf(m->input, sizeof(m->input), "1234");
+	bgpd_mgmt_reply(m, true); /* a secure PIN needs 16 characters */
+	CHECK(m->prompt_kind == BGPD_PROMPT_PIN);
+	snprintf(m->input, sizeof(m->input), "1234567890123456");
+	bgpd_mgmt_reply(m, true);
+	CHECK(expect(BGPD_OP_PIN_REPLY) == 24 && packet[6 + 7] == 16);
+
+	request(0x0e, 0, 0);
+	bgpd_mgmt_reply(m, false);
+	CHECK(expect(BGPD_OP_PIN_NEGATIVE) == BGPD_ADDR_SIZE);
+
+	memcpy(done, remote, BGPD_ADDR_SIZE);
+	done[BGPD_ADDR_SIZE] = 0;
+	reply(BGPD_OP_PAIR, 0, done, BGPD_ADDR_SIZE);
+	CHECK(!m->pairing && d->paired);
+	CHECK(strstr(m->status, "Pairing successful") != NULL);
+	CHECK(bgpd_devices_get(&m->devices, other) != NULL);
+}
+
+static void test_cancel_and_failure(void)
+{
+	struct bgpd_device *d = bgpd_devices_get(&m->devices, remote);
+
+	CHECK(d != NULL);
+	if (d == NULL)
+		return;
+	d->paired = false;
+	bgpd_mgmt_pair(m, d);
+	CHECK(expect(BGPD_OP_PAIR) == 8);
+	bgpd_mgmt_cancel_pair(m);
+	CHECK(expect(BGPD_OP_CANCEL_PAIR) == BGPD_ADDR_SIZE);
+	reply(BGPD_OP_PAIR, 0x10, NULL, 0);
+	CHECK(!m->pairing && strstr(m->status, "Cancelled") != NULL);
+
+	d->paired = true;
+	bgpd_mgmt_pair(m, d);
+	CHECK(strcmp(m->status, "Already paired") == 0);
+}
+
+static void test_unpair_and_disconnect(void)
+{
+	struct bgpd_device *d = bgpd_devices_get(&m->devices, remote);
+	uint8_t key[26] = {1};
+
+	CHECK(d != NULL);
+	if (d == NULL)
+		return;
+	memcpy(key + 1, remote, BGPD_ADDR_SIZE);
+	key[1 + 7] = 4;
+	event(0x09, m->index, key, sizeof(key));
+	d->connected = true;
+	bgpd_mgmt_disconnect(m, d);
+	CHECK(expect(BGPD_OP_DISCONNECT) == BGPD_ADDR_SIZE);
+	reply(BGPD_OP_DISCONNECT, 0, remote, BGPD_ADDR_SIZE);
+	CHECK(!d->connected);
+	bgpd_mgmt_unpair(m, d);
+	CHECK(expect(BGPD_OP_UNPAIR) == 8 && packet[6 + 7] == 1);
+	reply(BGPD_OP_UNPAIR, 0, remote, BGPD_ADDR_SIZE);
+	CHECK(!d->paired && !d->saved && m->store.count == 0);
+}
+
 static void test_failures(void)
 {
 	uint8_t other[2] = {0, 0};
@@ -201,6 +304,9 @@ int main(void)
 	test_scan();
 	test_power();
 	test_keys();
+	test_pairing();
+	test_cancel_and_failure();
+	test_unpair_and_disconnect();
 	test_failures();
 	bgpd_mgmt_close(m);
 	close(peer);

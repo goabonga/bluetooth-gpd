@@ -121,6 +121,26 @@ void bgpd_mgmt_scan(struct bgpd_mgmt *m);
 /* Turns the adapter on or off. */
 void bgpd_mgmt_toggle_power(struct bgpd_mgmt *m);
 
+/*
+ * Pairs with a device. The kernel then asks for a PIN, a passkey or a
+ * confirmation: prompt_kind, prompt and input describe the open prompt and
+ * bgpd_mgmt_reply() answers it. Unsolicited requests are refused.
+ */
+void bgpd_mgmt_pair(struct bgpd_mgmt *m, const struct bgpd_device *device);
+
+/* Cancels the pairing in progress. */
+void bgpd_mgmt_cancel_pair(struct bgpd_mgmt *m);
+
+/* Accepts the prompt (with input for a PIN or passkey) or rejects it. */
+void bgpd_mgmt_reply(struct bgpd_mgmt *m, bool accept);
+
+/* Removes the pairing of a device and disconnects it. */
+void bgpd_mgmt_unpair(struct bgpd_mgmt *m, const struct bgpd_device *device);
+
+/* Disconnects a device. */
+void bgpd_mgmt_disconnect(struct bgpd_mgmt *m,
+			  const struct bgpd_device *device);
+
 /* Switches to the next adapter, or refreshes the list when not ready. */
 void bgpd_mgmt_next_adapter(struct bgpd_mgmt *m);
 
