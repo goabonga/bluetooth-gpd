@@ -32,7 +32,7 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := device store mgmt hog
+CORE    := device store mgmt hog daemon
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a
@@ -45,7 +45,7 @@ TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 help: ## List the make targets
 	@awk -F':.*## ' '/^[a-z][a-z-]*:.*## /{printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: $(BUILD)/bluetooth ## Build everything
+all: $(BUILD)/bluetooth $(BUILD)/bluetooth-daemon ## Build everything
 
 # The core modules form a static library, shared by every executable.
 $(LIB): $(LIB_OBJ)
@@ -54,6 +54,9 @@ $(LIB): $(LIB_OBJ)
 
 $(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_DEP)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/main.o $(BUILD)/ui.o $(LIB) $(CTUI_LIBS)
+
+$(BUILD)/bluetooth-daemon: $(BUILD)/daemon_main.o $(LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BUILD)/daemon_main.o $(LIB) -lutil
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -c -o $@ $<
@@ -86,6 +89,7 @@ lint: $(CTUI_DEP) ## Run clang-tidy on the sources
 
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
+	install -Dm755 $(BUILD)/bluetooth-daemon $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
 
 clean: ## Remove the build directory
 	rm -rf $(BUILD)
