@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define TONE_MS 3000U
+
 void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 		      FILE *log)
 {
@@ -14,6 +16,7 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 	daemon->log = log;
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_init(&daemon->slots[i].hog);
+	bgpd_audio_init(&daemon->audio);
 	daemon->ipc.listener = -1;
 	for (size_t i = 0; i < BGPD_IPC_MAX_CLIENTS; i++)
 		daemon->ipc.peers[i].fd = -1;
@@ -87,14 +90,16 @@ static void connect_command(struct bgpd_daemon *daemon,
 	struct bgpd_mgmt *m = daemon->mgmt;
 	struct bgpd_daemon_slot *s;
 
-	if (d->addr[6] == BGPD_ADDR_BREDR) {
-		snprintf(m->status, sizeof(m->status),
-			 "Classic devices connect through audio (not "
-			 "available)");
-		return;
-	}
 	if (!d->paired) {
 		snprintf(m->status, sizeof(m->status), "Pair the device first");
+		return;
+	}
+	if (d->addr[6] == BGPD_ADDR_BREDR) {
+		if (bgpd_audio_active(&daemon->audio))
+			snprintf(m->status, sizeof(m->status),
+				 "An audio device is already in use");
+		else
+			bgpd_audio_connect(&daemon->audio, d->addr, d->name);
 		return;
 	}
 	s = find_slot(daemon, d->addr);
@@ -109,6 +114,10 @@ static void disconnect_command(struct bgpd_daemon *daemon,
 {
 	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
 
+	if (d->addr[6] == BGPD_ADDR_BREDR &&
+	    memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0)
+		bgpd_audio_close(&daemon->audio);
+
 	if (s != NULL) {
 		s->held = true;
 		bgpd_hog_close(&s->hog);
@@ -116,10 +125,36 @@ static void disconnect_command(struct bgpd_daemon *daemon,
 	bgpd_mgmt_disconnect(daemon->mgmt, d);
 }
 
+static void tone_command(struct bgpd_daemon *daemon,
+			 const struct bgpd_device *d)
+{
+	struct bgpd_mgmt *m = daemon->mgmt;
+	bool same =
+	    bgpd_audio_active(&daemon->audio) &&
+	    memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0;
+
+	if (d->addr[6] != BGPD_ADDR_BREDR || !d->paired) {
+		snprintf(m->status, sizeof(m->status),
+			 "Pair a Classic audio device first");
+		return;
+	}
+	if (!same && bgpd_audio_active(&daemon->audio)) {
+		snprintf(m->status, sizeof(m->status),
+			 "An audio device is already in use");
+		return;
+	}
+	if (!same && bgpd_audio_connect(&daemon->audio, d->addr, d->name) < 0)
+		return;
+	bgpd_audio_tone(&daemon->audio, TONE_MS);
+}
+
 static void unpair_command(struct bgpd_daemon *daemon,
 			   const struct bgpd_device *d)
 {
 	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
+
+	if (memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0)
+		bgpd_audio_close(&daemon->audio);
 
 	/* The slot is released once the kernel reports the device unpaired. */
 	if (s != NULL) {
@@ -175,6 +210,9 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 	case BGPD_IPC_UNPAIR:
 		unpair_command(daemon, d);
 		break;
+	case BGPD_IPC_TONE:
+		tone_command(daemon, d);
+		break;
 	}
 }
 
@@ -207,6 +245,13 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 
 	bgpd_mgmt_poll(m);
 	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
+	bgpd_audio_poll(&daemon->audio);
+	if (daemon->audio.changed) {
+		daemon->audio.changed = false;
+		snprintf(m->status, sizeof(m->status), "%s",
+			 daemon->audio.status);
+		log_line(daemon, daemon->audio.status);
+	}
 	/* Someone must be there to answer the pairing requests of devices. */
 	m->incoming = bgpd_ipc_clients(&daemon->ipc) > 0;
 	if (!m->incoming && m->prompt_kind != BGPD_PROMPT_NONE)
@@ -236,6 +281,11 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 	}
 }
 
+bool bgpd_daemon_streaming(const struct bgpd_daemon *daemon)
+{
+	return bgpd_audio_streaming(&daemon->audio);
+}
+
 size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 {
 	size_t n = 0;
@@ -248,6 +298,7 @@ size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 
 void bgpd_daemon_close(struct bgpd_daemon *daemon)
 {
+	bgpd_audio_close(&daemon->audio);
 	bgpd_ipc_server_close(&daemon->ipc);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_close(&daemon->slots[i].hog);

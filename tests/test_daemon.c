@@ -41,6 +41,15 @@ static struct bgpd_device *add(struct bgpd_mgmt *m, uint8_t last, uint8_t type,
 	return d;
 }
 
+static int fake_fds[2];
+
+/* A connected channel in place of the Bluetooth one. */
+static int fake_channel(const uint8_t addr[BGPD_ADDR_SIZE])
+{
+	(void)addr;
+	return fake_fds[0];
+}
+
 static void command(struct bgpd_ipc_client *client, struct bgpd_daemon *daemon,
 		    struct bgpd_mgmt *mirror, enum bgpd_ipc_kind kind,
 		    const uint8_t *addr)
@@ -109,6 +118,31 @@ static void test_interface(void)
 	m->settings = 1U;
 	command(client, daemon, mirror, BGPD_IPC_VISIBLE, NULL);
 	CHECK(m->prepare_action == BGPD_OP_DISCOVERABLE);
+
+	/* Classic devices connect through audio, and play a test tone. */
+	{
+		struct bgpd_device *audio = add(m, 5, BGPD_ADDR_BREDR, true);
+		uint8_t classic[BGPD_ADDR_SIZE];
+
+		CHECK(audio != NULL);
+		if (audio != NULL) {
+			memcpy(classic, audio->addr, BGPD_ADDR_SIZE);
+			CHECK(socketpair(AF_UNIX,
+					 SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+					 fake_fds) == 0);
+			daemon->audio.avdtp.open_channel = fake_channel;
+			command(client, daemon, mirror, BGPD_IPC_CONNECT,
+				classic);
+			CHECK(bgpd_audio_active(&daemon->audio));
+			command(client, daemon, mirror, BGPD_IPC_TONE, classic);
+			CHECK(daemon->audio.tone_ms > 0);
+			command(client, daemon, mirror, BGPD_IPC_DISCONNECT,
+				classic);
+			CHECK(!bgpd_audio_active(&daemon->audio));
+			close(fake_fds[1]);
+			CHECK(!bgpd_daemon_streaming(daemon));
+		}
+	}
 
 	/* A device that is not paired is not connected. */
 	addr[0] = 2;

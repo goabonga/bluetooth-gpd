@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 
+#include "audio.h"
 #include "hog.h"
 #include "ipc.h"
 #include "mgmt.h"
@@ -34,6 +35,7 @@ struct bgpd_daemon {
 	FILE *log;		       /* messages, or NULL */
 	char logged[BGPD_STATUS_SIZE]; /* the last message written to log */
 	struct bgpd_daemon_slot slots[BGPD_DAEMON_SLOTS];
+	struct bgpd_audio audio; /* the Classic audio device in use */
 	struct bgpd_ipc_server ipc;
 };
 
@@ -57,6 +59,9 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon);
  * message the log received.
  */
 void bgpd_daemon_log_changes(struct bgpd_daemon *daemon);
+
+/* True while audio is sent, and the caller should poll often. */
+bool bgpd_daemon_streaming(const struct bgpd_daemon *daemon);
 
 /* Number of devices currently serving input. */
 size_t bgpd_daemon_running(const struct bgpd_daemon *daemon);

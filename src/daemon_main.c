@@ -15,7 +15,7 @@
 #define USAGE                                                                  \
 	"Usage: bluetooth-daemon [--adapter hci0] [--state-dir DIR] "          \
 	"[--socket PATH] [--trace FILE]\n"                                     \
-	"Keeps the paired Bluetooth LE devices connected through the Linux "   \
+	"Keeps the paired Bluetooth devices connected through the Linux "      \
 	"kernel and serves the interfaces on a Unix socket.\n"
 
 static volatile sig_atomic_t quitting;
@@ -51,9 +51,10 @@ static void run(struct bgpd_daemon *daemon)
 	while (!quitting) {
 		bgpd_daemon_poll(daemon);
 		bgpd_daemon_log_changes(daemon);
-		/* Wakes on kernel events, and often enough for the HID links.
-		 */
-		if (poll(&p, 1, 50) < 0 && errno != EINTR)
+		/* Wakes on kernel events, and often enough for the HID links
+		 * and, while audio is sent, for its packets. */
+		if (poll(&p, 1, bgpd_daemon_streaming(daemon) ? 5 : 50) < 0 &&
+		    errno != EINTR)
 			break;
 	}
 }

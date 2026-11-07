@@ -33,6 +33,7 @@ static const struct {
     {"connect", BGPD_IPC_CONNECT, true, false},
     {"disconnect", BGPD_IPC_DISCONNECT, true, false},
     {"unpair", BGPD_IPC_UNPAIR, true, false},
+    {"tone", BGPD_IPC_TONE, true, false},
 };
 
 /* ---- writing ---- */

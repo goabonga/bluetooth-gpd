@@ -1,5 +1,5 @@
 [Unit]
-Description=Keeps the paired Bluetooth LE devices connected
+Description=Bluetooth daemon: keeps the paired devices connected and streams audio to them
 
 [Service]
 ExecStart=@BINDIR@/bluetooth-daemon

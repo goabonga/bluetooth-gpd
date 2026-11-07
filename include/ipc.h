@@ -32,6 +32,7 @@ enum bgpd_ipc_kind {
 	BGPD_IPC_CONNECT,
 	BGPD_IPC_DISCONNECT,
 	BGPD_IPC_UNPAIR,
+	BGPD_IPC_TONE, /* plays a test tone on an audio device */
 };
 
 struct bgpd_ipc_command {
