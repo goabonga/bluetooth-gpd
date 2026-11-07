@@ -3,7 +3,9 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2
-CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -Iinclude
+# Pass WERROR= to build with warnings only (what a package build does).
+WERROR  ?= -Werror
+CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic $(WERROR) -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
 PKG_CONFIG ?= pkg-config
 #libsbc encodes the audio sent to Bluetooth headsets and speakers.
