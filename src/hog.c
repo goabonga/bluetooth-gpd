@@ -537,6 +537,10 @@ int bgpd_hog_connect(struct bgpd_hog *hog, const uint8_t addr[BGPD_ADDR_SIZE],
 	struct sockaddr_l2cap sa = {.family = AF_BLUETOOTH_FAMILY,
 				    .cid = ATT_CID,
 				    .addr_type = addr[6]};
+	/* Like BlueZ: the ATT channel is bound before it is connected. */
+	struct sockaddr_l2cap local = {.family = AF_BLUETOOTH_FAMILY,
+				       .cid = ATT_CID,
+				       .addr_type = BGPD_ADDR_LE_PUBLIC};
 	struct bt_security_option security = {.level = BT_SECURITY_MEDIUM};
 	int fd;
 
