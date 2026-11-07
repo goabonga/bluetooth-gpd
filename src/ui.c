@@ -53,10 +53,8 @@ static uint16_t open_prompt(const struct bgpd_ui *ui)
 
 static void reply(struct bgpd_ui *ui, bool accept)
 {
-	if (ui->client == NULL) {
-		bgpd_mgmt_reply(ui->mgmt, accept);
+	if (ui->client == NULL)
 		return;
-	}
 	send_command(ui, accept ? BGPD_IPC_ACCEPT : BGPD_IPC_REJECT, NULL);
 	ui->answered = true;
 }
@@ -133,27 +131,16 @@ void bgpd_ui_init(struct bgpd_ui *ui, struct bgpd_mgmt *m, bool demo)
 	ui->mgmt = m;
 	ui->demo = demo;
 	ctui_table_init(&ui->table, columns, COLS_, 0, cell, ui);
-	bgpd_hog_init(&ui->hog);
 }
 
 static void connect_device(struct bgpd_ui *ui, struct bgpd_device *d)
 {
-	struct bgpd_mgmt *m = ui->mgmt;
-
-	if (ui->demo) {
-		d->connected = true;
-		say(m, "DEMO: simulated connection");
-	} else if (ui->client != NULL)
+	if (ui->client != NULL) {
 		send_command(ui, BGPD_IPC_CONNECT, d);
-	else if (d->addr[6] == BGPD_ADDR_BREDR)
-		say(m, "Classic devices connect through audio (not available)");
-	else if (!d->paired)
-		say(m, "Pair the device first");
-	else {
-		ui->hog.trace = m->trace;
-		ui->hog.trace_start = m->trace_start;
-		bgpd_hog_connect(&ui->hog, d->addr, d->name);
+		return;
 	}
+	d->connected = true;
+	say(ui->mgmt, "DEMO: simulated connection");
 }
 
 void bgpd_ui_attach(struct bgpd_ui *ui, struct bgpd_ipc_client *client)
@@ -163,26 +150,8 @@ void bgpd_ui_attach(struct bgpd_ui *ui, struct bgpd_ipc_client *client)
 
 void bgpd_ui_poll(struct bgpd_ui *ui)
 {
-	struct bgpd_mgmt *m = ui->mgmt;
-
-	if (ui->client != NULL) {
-		bgpd_ipc_poll(ui->client, m);
-		return;
-	}
-	bgpd_hog_poll(&ui->hog);
-	if (ui->hog.changed) {
-		say(m, ui->hog.status);
-		ui->hog.changed = false;
-	}
-	/* A new LE bond is dropped by the kernel after 2 s unless held. */
-	if (ui->was_pairing && !m->pairing && !ui->demo) {
-		struct bgpd_device *d =
-		    bgpd_devices_get(&m->devices, m->pair_addr);
-
-		if (d != NULL && d->paired)
-			connect_device(ui, d);
-	}
-	ui->was_pairing = m->pairing;
+	if (ui->client != NULL)
+		bgpd_ipc_poll(ui->client, ui->mgmt);
 }
 
 static ctui_tone state_tone(const struct bgpd_mgmt *m, const char **text)
@@ -292,7 +261,7 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 	refresh();
 }
 
-/* ---- operations: on the kernel, or on the table in demo mode ---- */
+/* ---- operations: sent to the daemon, or played on the table in demo ---- */
 
 static void toggle_power(struct bgpd_ui *ui)
 {
@@ -300,10 +269,6 @@ static void toggle_power(struct bgpd_ui *ui)
 
 	if (ui->client != NULL) {
 		send_command(ui, BGPD_IPC_POWER, NULL);
-		return;
-	}
-	if (!ui->demo) {
-		bgpd_mgmt_toggle_power(m);
 		return;
 	}
 	m->settings ^= 1U;
@@ -320,8 +285,6 @@ static void scan(struct bgpd_ui *ui)
 
 	if (ui->client != NULL)
 		send_command(ui, BGPD_IPC_SCAN, NULL);
-	else if (!ui->demo)
-		bgpd_mgmt_scan(m);
 	else if ((m->settings & 1U) == 0)
 		say(m, "Turn the adapter on first");
 	else
@@ -334,26 +297,16 @@ static void pair(struct bgpd_ui *ui, struct bgpd_device *d)
 		send_command(ui, BGPD_IPC_PAIR, d);
 		return;
 	}
-	if (!ui->demo) {
-		bgpd_mgmt_pair(ui->mgmt, d);
-		return;
-	}
 	d->paired = d->saved = true;
 	say(ui->mgmt, "DEMO: simulated pairing");
 }
 
 static void disconnect(struct bgpd_ui *ui, struct bgpd_device *d)
 {
-	if (ui->client != NULL) {
+	if (ui->client != NULL)
 		send_command(ui, BGPD_IPC_DISCONNECT, d);
-		return;
-	}
-	if (ui->demo) {
+	else
 		d->connected = false;
-		return;
-	}
-	bgpd_hog_close(&ui->hog);
-	bgpd_mgmt_disconnect(ui->mgmt, d);
 }
 
 static void forget(struct bgpd_ui *ui)
@@ -365,10 +318,8 @@ static void forget(struct bgpd_ui *ui)
 		return;
 	if (ui->client != NULL)
 		send_command(ui, BGPD_IPC_UNPAIR, d);
-	else if (ui->demo)
-		d->paired = d->saved = d->connected = false;
 	else
-		bgpd_mgmt_unpair(ui->mgmt, d);
+		d->paired = d->saved = d->connected = false;
 }
 
 /* ---- dialogs ---- */
@@ -424,17 +375,13 @@ bool bgpd_ui_key(struct bgpd_ui *ui, int key)
 	if (key == 27 && m->pairing) {
 		if (ui->client != NULL)
 			send_command(ui, BGPD_IPC_CANCEL, NULL);
-		else
-			bgpd_mgmt_cancel_pair(m);
 		return true;
 	}
 	if (key == 'a') {
 		if (ui->client != NULL)
 			send_command(ui, BGPD_IPC_ADAPTER, NULL);
-		else if (ui->demo)
-			say(m, "DEMO: a single adapter");
 		else
-			bgpd_mgmt_next_adapter(m);
+			say(m, "DEMO: a single adapter");
 		return true;
 	}
 	if (key == 'o' && m->ready)

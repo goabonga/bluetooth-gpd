@@ -4,10 +4,11 @@
 /*
  * ui.h - the terminal interface, drawn with ctui.
  *
- * It shows the devices of a bgpd_mgmt, turns keys into operations on it and
- * opens ctui dialogs for the authentication prompts and for forgetting a
- * device. In demo mode the operations act on the device table only, so
- * that the interface can be tried without hardware or privileges.
+ * It shows the devices of a bgpd_mgmt, a copy of the state of the daemon,
+ * turns keys into commands for the daemon and opens ctui dialogs for the
+ * authentication prompts and for forgetting a device. Without a daemon
+ * (demo mode) the operations act on the device table only, so that the
+ * interface can be tried without hardware.
  */
 #ifndef BGPD_UI_H
 #define BGPD_UI_H
@@ -15,7 +16,6 @@
 #include <ctui/dialog.h>
 #include <ctui/table.h>
 
-#include "hog.h"
 #include "ipc.h"
 #include "mgmt.h"
 
@@ -25,9 +25,7 @@
 struct bgpd_ui {
 	struct bgpd_mgmt *mgmt;
 	bool demo;
-	bool paired_only;    /* the "Paired" tab */
-	bool was_pairing;    /* a pairing was in progress at the last poll */
-	struct bgpd_hog hog; /* the BLE HID device being served */
+	bool paired_only;		/* the "Paired" tab */
 	struct bgpd_ipc_client *client; /* the daemon, or NULL */
 	bool answered; /* the open prompt was answered, the daemon is told */
 	size_t rows[BGPD_MAX_DEVICES];
@@ -56,7 +54,7 @@ void bgpd_ui_init(struct bgpd_ui *ui, struct bgpd_mgmt *m, bool demo);
  */
 void bgpd_ui_attach(struct bgpd_ui *ui, struct bgpd_ipc_client *client);
 
-/* Advances the BLE connection and follows the pairing; call often. */
+/* Receives the state of the daemon; call often. */
 void bgpd_ui_poll(struct bgpd_ui *ui);
 
 /* Redraws the whole screen. */
