@@ -140,6 +140,8 @@ int main(int argc, char **argv)
 		status = 1;
 		goto done;
 	}
+	if (!demo)
+		bgpd_mgmt_check_manager(m, "/proc");
 	setlocale(LC_ALL, "");
 	signal(SIGINT, interrupted);
 	signal(SIGTERM, interrupted);
