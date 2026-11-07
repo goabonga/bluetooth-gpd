@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 static int failures;
@@ -123,7 +124,32 @@ static void test_interface(void)
 	bgpd_daemon_poll(daemon);
 	CHECK(used_slots(daemon) == 0);
 
+	/* Pairing requests are accepted while an interface is there. */
+	CHECK(m->incoming);
 	bgpd_ipc_client_close(client);
+	for (int i = 0; i < 5; i++) {
+		usleep(5000);
+		bgpd_daemon_poll(daemon);
+	}
+	CHECK(!m->incoming);
+
+	/* A prompt nobody can answer is rejected. */
+	{
+		int fds[2];
+		uint8_t packet[64];
+
+		CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+				 fds) == 0);
+		m->fd = fds[0];
+		m->prompt_kind = BGPD_PROMPT_CONFIRM;
+		bgpd_daemon_poll(daemon);
+		CHECK(m->prompt_kind == BGPD_PROMPT_NONE);
+		CHECK(read(fds[1], packet, sizeof(packet)) > 0);
+		CHECK(bgpd_get16(packet) == BGPD_OP_CONFIRM_NEGATIVE);
+		close(fds[1]);
+		close(fds[0]);
+		m->fd = -1;
+	}
 cleanup:
 	if (daemon != NULL)
 		bgpd_daemon_close(daemon);

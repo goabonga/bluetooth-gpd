@@ -207,6 +207,10 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 
 	bgpd_mgmt_poll(m);
 	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
+	/* Someone must be there to answer the pairing requests of devices. */
+	m->incoming = bgpd_ipc_clients(&daemon->ipc) > 0;
+	if (!m->incoming && m->prompt_kind != BGPD_PROMPT_NONE)
+		bgpd_mgmt_reply(m, false);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++) {
 		bgpd_hog_poll(&daemon->slots[i].hog);
 		report(daemon, &daemon->slots[i]);
