@@ -32,7 +32,7 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := device store mgmt hog ipc ipc_server daemon
+CORE    := device store mgmt hog ipc ipc_server ipc_client daemon
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a

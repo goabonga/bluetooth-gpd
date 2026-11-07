@@ -104,4 +104,30 @@ size_t bgpd_ipc_clients(const struct bgpd_ipc_server *server);
 /* Disconnects the clients and removes the socket. */
 void bgpd_ipc_server_close(struct bgpd_ipc_server *server);
 
+#define BGPD_IPC_RECONNECT_MS 1000
+
+struct bgpd_ipc_client {
+	int fd;
+	char path[108];
+	uint64_t retry; /* bgpd_now() of the next connection attempt */
+	size_t used;
+	char buffer[BGPD_IPC_SNAPSHOT_MAX + 1]; /* snapshot being received */
+};
+
+/* Prepares a client of the daemon listening on path; connects at once. */
+void bgpd_ipc_connect(struct bgpd_ipc_client *client, const char *path);
+
+/*
+ * Applies to mirror the snapshots the daemon sent. When the daemon cannot
+ * be reached the mirror is marked not ready, and the connection is tried
+ * again every second. Returns true while connected.
+ */
+bool bgpd_ipc_poll(struct bgpd_ipc_client *client, struct bgpd_mgmt *mirror);
+
+/* Sends a command. Returns -1 when not connected. */
+int bgpd_ipc_send(struct bgpd_ipc_client *client,
+		  const struct bgpd_ipc_command *command);
+
+void bgpd_ipc_client_close(struct bgpd_ipc_client *client);
+
 #endif /* BGPD_IPC_H */
