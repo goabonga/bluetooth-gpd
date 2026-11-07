@@ -212,7 +212,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed git github-cli ncurses pkgconf sbc
+        run: pacman -Syu --noconfirm --needed git github-cli ncurses pkgconf sbc alsa-lib
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release.outputs.tag }}
@@ -235,8 +235,9 @@ jobs:
           version=${TAG#v}
           name="bluetooth-gpd-${version}-linux-x86_64"
           mkdir -p "dist/${name}"
-          cp build/bluetooth build/bluetooth-daemon LICENSE README.md \
-            "dist/${name}/"
+          cp build/bluetooth build/bluetooth-daemon \
+            build/libasound_module_pcm_bluetooth.so alsa/99-bluetooth.conf \
+            LICENSE README.md "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "$name"
           rm -rf "dist/${name}"
           (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")

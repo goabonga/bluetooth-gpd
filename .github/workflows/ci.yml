@@ -76,7 +76,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc alsa-lib
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -105,7 +105,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc alsa-lib
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -138,7 +138,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf sbc alsa-lib
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
