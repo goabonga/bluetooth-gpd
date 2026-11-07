@@ -22,8 +22,8 @@ static const ctui_table_column columns[COLS_] = {
 };
 
 static const char *const hints =
-    "s scan  v visible  p pair  c connect  t tone  d disconnect  x forget  "
-    "o power  a adapter  Tab filter  Esc cancel  q quit";
+    "s scan  v visible  p pair  c connect  t tone  +/- volume  d disconnect  "
+    "x forget  o power  a adapter  Tab filter  Esc cancel  q quit";
 
 static void say(struct bgpd_mgmt *m, const char *text)
 {
@@ -246,6 +246,16 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 		 m->scanning ? "active" : "stopped",
 		 (m->settings & BGPD_SETTING_DISCOVERABLE) != 0 ? "yes" : "no");
 	ctui_put(2, 2, COLS - 4, line, ctui_attr(CTUI_PAIR_HEADING, true));
+	if (m->audio.active) {
+		static const char *const states[] = {"connecting", "ready",
+						     "streaming"};
+
+		snprintf(line, sizeof(line), "Audio: %.40s  %s  Volume %d%%",
+			 m->audio.name, states[m->audio.state],
+			 m->audio.volume);
+		ctui_put(3, 2, COLS - 4, line,
+			 ctui_attr(CTUI_PAIR_MUTED, false));
+	}
 	if (ui->visible == 0)
 		ctui_put(5, 2, COLS - 4,
 			 "No devices. s starts scanning; o turns the adapter "
@@ -291,6 +301,24 @@ static void scan(struct bgpd_ui *ui)
 		say(m, "Turn the adapter on first");
 	else
 		m->scanning = !m->scanning;
+}
+
+#define VOLUME_STEP 5
+
+/* Raises or lowers the volume of the audio device in use. */
+static void change_volume(struct bgpd_ui *ui, int step)
+{
+	struct bgpd_ipc_command command = {.kind = BGPD_IPC_VOLUME};
+	int volume = ui->mgmt->audio.volume < 0 ? 50 : ui->mgmt->audio.volume;
+
+	if (!ui->mgmt->audio.active) {
+		say(ui->mgmt, "No audio device connected");
+		return;
+	}
+	volume += step;
+	command.value = volume < 0 ? 0 : volume > 100 ? 100 : volume;
+	if (bgpd_ipc_send(ui->client, &command) < 0)
+		say(ui->mgmt, "The daemon is not reachable");
 }
 
 static void visible(struct bgpd_ui *ui)
@@ -402,6 +430,8 @@ bool bgpd_ui_key(struct bgpd_ui *ui, int key)
 		scan(ui);
 	else if (key == 'v' && m->ready)
 		visible(ui);
+	else if ((key == '+' || key == '=' || key == '-') && ui->client != NULL)
+		change_volume(ui, key == '-' ? -VOLUME_STEP : VOLUME_STEP);
 	if (!m->ready || ui->visible == 0)
 		return true;
 	ctui_table_key(&ui->table, key, LINES - 8);

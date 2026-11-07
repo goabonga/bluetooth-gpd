@@ -148,6 +148,26 @@ int main(void)
 	CHECK(c != NULL && c->kind == BGPD_IPC_VISIBLE);
 
 	/* The first row is the keyboard. */
+	/* The volume keys need an audio device. */
+	CHECK(press(ui, '+') == NULL);
+	CHECK(strstr(mirror->status, "No audio device") != NULL);
+	daemon_state->audio.active = true;
+	memcpy(daemon_state->audio.addr, headset, BGPD_ADDR_SIZE);
+	snprintf(daemon_state->audio.name, sizeof(daemon_state->audio.name),
+		 "Headset");
+	daemon_state->audio.volume = 40;
+	exchange(ui);
+	c = press(ui, '+');
+	CHECK(c != NULL && c->kind == BGPD_IPC_VOLUME && c->value == 45);
+	c = press(ui, '-');
+	CHECK(c != NULL && c->kind == BGPD_IPC_VOLUME && c->value == 35);
+	daemon_state->audio.volume = 98;
+	exchange(ui);
+	c = press(ui, '+');
+	CHECK(c != NULL && c->value == 100);
+	daemon_state->audio.active = false;
+	exchange(ui);
+
 	c = press(ui, 'p');
 	CHECK(c != NULL && c->kind == BGPD_IPC_PAIR);
 	CHECK(c != NULL && memcmp(c->addr, keyboard, BGPD_ADDR_SIZE) == 0);
