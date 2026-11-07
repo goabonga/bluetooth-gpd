@@ -31,14 +31,17 @@ to open the management socket; the program drops every capability once it
 is open.
 
 ```bash
-bluetooth [--demo] [--ascii] [--adapter hci0] [--state-dir DIR]
+bluetooth [--demo] [--ascii] [--adapter hci0] [--state-dir DIR] [--trace FILE]
 ```
 
 `--demo` runs without hardware or privileges on three fake devices.
 `--ascii` replaces the powerline glyphs. Pairing keys are kept per adapter
 under `$XDG_STATE_HOME/bluetooth` (`~/.local/state/bluetooth`),
 in a private directory locked while the program runs. Use one Bluetooth
-manager per adapter: loading keys replaces the kernel's key lists.
+manager per adapter: loading keys replaces the kernel's key lists. `bluetoothd` receives the same
+authentication requests and refuses them, so pairing fails at once: the
+program warns when it runs, and `systemctl stop bluetooth` fixes it.
+`--trace FILE` logs the management packets (without keys or PINs).
 
 | Key | Action |
 | --- | --- |
