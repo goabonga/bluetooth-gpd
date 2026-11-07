@@ -76,11 +76,15 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
+      - name: Install ctui
+        env:
+          CTUI_TAG: ${{ vars.CTUI_TAG }}
+        run: scripts/install-ctui.sh "$CTUI_TAG"
       - name: clang-format
         shell: bash
         run: make format-check 2>&1 | tee lint.txt
@@ -101,11 +105,15 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
+      - name: Install ctui
+        env:
+          CTUI_TAG: ${{ vars.CTUI_TAG }}
+        run: scripts/install-ctui.sh "$CTUI_TAG"
       - name: Build with gcc and clang
         shell: bash
         run: |
@@ -114,7 +122,6 @@ jobs:
             make clean
             make CC="$cc"
             ./build/bluetooth --version
-            ./build/bluetooth Arch
           done 2>&1 | tee build.txt
       - name: Summary
         if: always()
@@ -130,11 +137,15 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install the toolchain
-        run: pacman -Syu --noconfirm --needed clang git
+        run: pacman -Syu --noconfirm --needed clang git ncurses pkgconf
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
+      - name: Install ctui
+        env:
+          CTUI_TAG: ${{ vars.CTUI_TAG }}
+        run: scripts/install-ctui.sh "$CTUI_TAG"
       - name: Unit tests with gcc and clang (ASan, UBSan)
         shell: bash
         run: |

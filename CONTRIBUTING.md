@@ -11,14 +11,19 @@ its terms.
 
 ## Development setup
 
-You need a C11 compiler (gcc or clang), `make`, `clang-format` and
-`clang-tidy`.
+You need a C11 compiler (gcc or clang), `make`, `pkg-config`, ncursesw,
+[ctui](https://github.com/goabonga/ctui), `clang-format` and `clang-tidy`.
 
 ```bash
 git clone https://github.com/goabonga/bluetooth-gpd.git
 cd bluetooth-gpd
 make
 ```
+
+The `ci` and `release` workflows install the version of ctui published on the
+AUR, building its package with `makepkg`. Set the repository variable
+`CTUI_TAG` (for example `v0.1.0`) to pin another tag: it is installed from the
+upstream sources, unless the AUR publishes exactly that version.
 
 ## Quality gates
 

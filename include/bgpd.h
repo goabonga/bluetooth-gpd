@@ -6,7 +6,4 @@
 
 #define BGPD_VERSION "0.0.0"
 
-/* The version of the program, as in BGPD_VERSION. */
-const char *bgpd_version(void);
-
 #endif /* BGPD_H */

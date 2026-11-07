@@ -5,11 +5,14 @@ CC      ?= cc
 CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
+PKG_CONFIG ?= pkg-config
+CTUI_CFLAGS := $(shell $(PKG_CONFIG) --cflags ctui ncursesw)
+CTUI_LIBS   := $(shell $(PKG_CONFIG) --libs ctui ncursesw)
 SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := bgpd device store mgmt
+CORE    := device store mgmt
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
@@ -23,11 +26,11 @@ help: ## List the make targets
 
 all: $(BUILD)/bluetooth ## Build everything
 
-$(BUILD)/bluetooth: $(BUILD)/main.o $(LIB_OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+$(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(CTUI_LIBS)
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(CTUI_CFLAGS) -c -o $@ $<
 
 $(BUILD):
 	mkdir -p $@
@@ -36,12 +39,12 @@ $(BUILD):
 # -fno-pie -no-pie: on linux-hardened a PIE lands inside the ASan shadow
 # range. Disable the sanitizers with `make test SANITIZE=` where the
 # platform rejects them.
-test: $(TESTS) ## Build and run the unit tests
-	@for t in $(TESTS); do echo $$t; $$t || exit 1; done
+test: all $(TESTS) ## Build and run the unit tests
+	@for t in $(TESTS); do echo $$t; $$t $(BUILD)/bluetooth || exit 1; done
 
 $(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
-		$(LDFLAGS) -o $@ $< $(CORE_C)
+		$(LDFLAGS) -o $@ $< $(CORE_C) -lutil
 
 format: ## Format the sources with clang-format
 	clang-format -i $(SOURCES)
@@ -50,7 +53,7 @@ format-check: ## Fail when a source is not formatted
 	clang-format --dry-run -Werror $(SOURCES)
 
 lint: ## Run clang-tidy on the sources
-	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude
+	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(CTUI_CFLAGS)
 
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
