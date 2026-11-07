@@ -116,8 +116,11 @@ static void connect_device(struct bgpd_ui *ui, struct bgpd_device *d)
 		say(m, "Classic devices connect through audio (not available)");
 	else if (!d->paired)
 		say(m, "Pair the device first");
-	else
+	else {
+		ui->hog.trace = m->trace;
+		ui->hog.trace_start = m->trace_start;
 		bgpd_hog_connect(&ui->hog, d->addr, d->name);
+	}
 }
 
 void bgpd_ui_poll(struct bgpd_ui *ui)
