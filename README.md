@@ -136,6 +136,29 @@ incoming pairing; requests are rejected when no interface is open to answer
 them. Address types are `BR` (Classic), `LE-P` (public LE) and `LE-R` (random LE); the flags are
 P paired, C connected and S key saved.
 
+## Headset microphone
+
+Recording from the PCM `bluetooth_in` starts everything the microphone needs
+on the audio device in use (`c` first):
+
+```bash
+arecord -D bluetooth_in -f S16_LE -r 16000 -c 1 -d 5 voice.wav
+```
+
+The daemon finds the Hands-Free service of the headset (SDP), connects its
+RFCOMM channel, answers its AT commands to establish the service level
+connection, agrees on the codec (mSBC wide band at 16 kHz when the headset
+supports it, else CVSD at 8 kHz) and opens the SCO voice link. The PCM then
+receives the microphone as mono 16-bit samples at the rate of the link
+(`plug` converts to the rate you ask), and opening it can take several
+seconds. Closing it ends the voice and hands-free links. The audio socket
+for it is `$XDG_RUNTIME_DIR/bluetooth-capture.sock` (`--capture-socket PATH`;
+`capture_server "PATH"` in the PCM definition): the client sends
+`BGPDCAP1`, receives the sample rate (4 bytes, little-endian; 0 when there is
+no headset or the link failed) and then the PCM. Calls and the earpiece are
+not handled: the sound still plays through the A2DP stream, and some
+headsets lower its quality or pause it while the voice link is open.
+
 ## Control protocol
 
 Other programs can follow and drive the daemon on its control socket
