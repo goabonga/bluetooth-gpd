@@ -298,7 +298,7 @@ size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 
 void bgpd_daemon_close(struct bgpd_daemon *daemon)
 {
-	bgpd_audio_close(&daemon->audio);
+	bgpd_audio_shutdown(&daemon->audio);
 	bgpd_ipc_server_close(&daemon->ipc);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_close(&daemon->slots[i].hog);
