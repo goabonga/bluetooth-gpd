@@ -215,8 +215,11 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 		tone_command(daemon, d);
 		break;
 	case BGPD_IPC_VOLUME:
-		bgpd_audio_set_volume(&daemon->audio,
-				      (unsigned int)command->value);
+		if (bgpd_audio_active(&daemon->audio) &&
+		    memcmp(daemon->audio.avdtp.addr, command->addr,
+			   BGPD_ADDR_SIZE) == 0)
+			bgpd_audio_set_volume(&daemon->audio,
+					      (unsigned int)command->value);
 		break;
 	}
 }
@@ -247,11 +250,13 @@ static void release_slots(struct bgpd_daemon *daemon)
 static void publish_audio(struct bgpd_daemon *daemon)
 {
 	const struct bgpd_audio *audio = &daemon->audio;
-	struct bgpd_audio_info *info = &daemon->mgmt->audio;
+	struct bgpd_mgmt *m = daemon->mgmt;
+	struct bgpd_audio_info *info = &m->audio[0];
 
-	info->active = bgpd_audio_active(audio);
-	if (!info->active)
+	m->audio_count = bgpd_audio_active(audio) ? 1 : 0;
+	if (m->audio_count == 0)
 		return;
+	info->active = true;
 	memcpy(info->addr, audio->avdtp.addr, BGPD_ADDR_SIZE);
 	snprintf(info->name, sizeof(info->name), "%s", audio->avdtp.name);
 	info->volume = (int)audio->volume;

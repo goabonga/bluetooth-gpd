@@ -21,6 +21,8 @@ static int failures;
 static const uint8_t remote[BGPD_ADDR_SIZE] = {
     0x55, 0x44, 0x33, 0x22, 0x11, 0x00, BGPD_ADDR_LE_PUBLIC};
 
+static const uint8_t other_audio[BGPD_ADDR_SIZE] = {9, 8, 7, 6, 5, 4, 0};
+
 static char snapshot[BGPD_IPC_SNAPSHOT_MAX];
 
 static void fill(struct bgpd_mgmt *m)
@@ -40,11 +42,17 @@ static void fill(struct bgpd_mgmt *m)
 	snprintf(m->status, sizeof(m->status), "Scanning\nnow");
 	snprintf(m->warning, sizeof(m->warning), "Mask bluetoothd");
 	snprintf(m->prompt, sizeof(m->prompt), "PIN for Keyboard?");
-	m->audio.active = true;
-	memcpy(m->audio.addr, remote, BGPD_ADDR_SIZE);
-	m->audio.state = BGPD_AUDIO_STREAMING;
-	m->audio.volume = 35;
-	snprintf(m->audio.name, sizeof(m->audio.name), "Head\tset");
+	m->audio_count = 2;
+	m->audio[0].active = true;
+	memcpy(m->audio[0].addr, remote, BGPD_ADDR_SIZE);
+	m->audio[0].state = BGPD_AUDIO_STREAMING;
+	m->audio[0].volume = 35;
+	snprintf(m->audio[0].name, sizeof(m->audio[0].name), "Head\tset");
+	m->audio[1].active = true;
+	memcpy(m->audio[1].addr, other_audio, BGPD_ADDR_SIZE);
+	m->audio[1].state = BGPD_AUDIO_READY;
+	m->audio[1].volume = -1;
+	snprintf(m->audio[1].name, sizeof(m->audio[1].name), "Speaker");
 	d = bgpd_devices_get(&m->devices, remote);
 	if (d == NULL)
 		return;
@@ -88,16 +96,21 @@ static void test_round_trip(void)
 	CHECK(b->devices.items[0].paired && b->devices.items[0].connected);
 	CHECK(!b->devices.items[0].saved && b->devices.items[0].has_rssi);
 	CHECK(b->devices.items[0].rssi == -60);
-	CHECK(b->audio.active && b->audio.state == BGPD_AUDIO_STREAMING);
-	CHECK(b->audio.volume == 35 && strcmp(b->audio.name, "Head set") == 0);
-	CHECK(memcmp(b->audio.addr, remote, BGPD_ADDR_SIZE) == 0);
+	CHECK(b->audio_count == 2);
+	CHECK(b->audio[0].state == BGPD_AUDIO_STREAMING);
+	CHECK(b->audio[0].volume == 35 &&
+	      strcmp(b->audio[0].name, "Head set") == 0);
+	CHECK(memcmp(b->audio[0].addr, remote, BGPD_ADDR_SIZE) == 0);
+	CHECK(b->audio[1].state == BGPD_AUDIO_READY &&
+	      b->audio[1].volume == -1);
+	CHECK(strcmp(b->audio[1].name, "Speaker") == 0);
 
 	/* A new snapshot replaces the devices and the audio device. */
 	a->devices.count = 0;
-	a->audio.active = false;
+	a->audio_count = 0;
 	CHECK(bgpd_ipc_snapshot(a, snapshot, sizeof(snapshot)) > 0);
 	CHECK(bgpd_ipc_apply(b, snapshot) == 0 && b->devices.count == 0);
-	CHECK(!b->audio.active);
+	CHECK(b->audio_count == 0);
 
 	/* It does not fit in a small buffer. */
 	fill(a);
@@ -190,14 +203,19 @@ static void test_commands(void)
 	memset(&in, 0, sizeof(in));
 	in.kind = BGPD_IPC_VOLUME;
 	in.value = 42;
+	memcpy(in.addr, remote, BGPD_ADDR_SIZE);
 	n = bgpd_ipc_format(&in, line, sizeof(line));
-	CHECK(strcmp(line, "volume 42\n") == 0 && n == 10);
-	CHECK(bgpd_ipc_parse("volume 42", &out) == 0 && out.value == 42);
-	CHECK(bgpd_ipc_parse("volume 0", &out) == 0 && out.value == 0);
-	CHECK(bgpd_ipc_parse("volume 101", &out) == -1);
-	CHECK(bgpd_ipc_parse("volume -1", &out) == -1);
+	CHECK(strcmp(line, "volume 55443322110001 42\n") == 0 && n == 25);
+	CHECK(bgpd_ipc_parse("volume 55443322110001 42", &out) == 0);
+	CHECK(out.value == 42 && memcmp(out.addr, remote, BGPD_ADDR_SIZE) == 0);
+	CHECK(bgpd_ipc_parse("volume 55443322110001 0", &out) == 0 &&
+	      out.value == 0);
+	CHECK(bgpd_ipc_parse("volume 55443322110001 101", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume 55443322110001 -1", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume 55443322110001", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume 42", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume 5544332211000x 42", &out) == -1);
 	CHECK(bgpd_ipc_parse("volume", &out) == -1);
-	CHECK(bgpd_ipc_parse("volume x", &out) == -1);
 
 	CHECK(bgpd_ipc_parse("", &out) == -1);
 	CHECK(bgpd_ipc_parse("scanning", &out) == -1);

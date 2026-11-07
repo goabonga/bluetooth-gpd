@@ -34,7 +34,7 @@ static const struct {
     {"disconnect", BGPD_IPC_DISCONNECT, true, false, false},
     {"unpair", BGPD_IPC_UNPAIR, true, false, false},
     {"tone", BGPD_IPC_TONE, true, false, false},
-    {"volume", BGPD_IPC_VOLUME, false, false, true},
+    {"volume", BGPD_IPC_VOLUME, true, false, true},
 };
 
 /* ---- writing ---- */
@@ -128,15 +128,16 @@ size_t bgpd_ipc_snapshot(const struct bgpd_mgmt *m, char *out, size_t size)
 		put(&o, "device\t%s\t%u\t%d\t%s\n", address, flags, d->rssi,
 		    name);
 	}
-	if (m->audio.active) {
+	for (size_t i = 0; i < m->audio_count; i++) {
 		static const char *const states[] = {"connecting", "ready",
 						     "streaming"};
+		const struct bgpd_audio_info *info = &m->audio[i];
 		char address[HEX_LENGTH + 1], name[BGPD_NAME_SIZE];
 
-		hex(m->audio.addr, address);
-		clean(m->audio.name, name, sizeof(name));
-		put(&o, "audio\t%s\t%s\t%d\t%s\n", address,
-		    states[m->audio.state], m->audio.volume, name);
+		hex(info->addr, address);
+		clean(info->name, name, sizeof(name));
+		put(&o, "audio\t%s\t%s\t%d\t%s\n", address, states[info->state],
+		    info->volume, name);
 	}
 	put(&o, "end\n");
 	return o.full ? 0 : o.used;
@@ -175,10 +176,13 @@ static int read_snapshot(struct bgpd_mgmt *m, const char *snapshot, bool apply)
 {
 	char line[BGPD_NAME_SIZE + 128];
 	size_t count = 0;
-	bool state = false, ended = false, audio = false;
+	bool state = false, ended = false;
+	size_t audios = 0;
 
-	if (apply)
+	if (apply) {
 		m->devices.count = 0;
+		m->audio_count = 0;
+	}
 	while (*snapshot != '\0' && !ended) {
 		const char *eol = strchr(snapshot, '\n');
 		size_t length;
@@ -271,14 +275,18 @@ static int read_snapshot(struct bgpd_mgmt *m, const char *snapshot, bool apply)
 			if (!unhex(f[1], addr) || state == 3 ||
 			    !number(f[3], -1, 100, &v[0]))
 				return -1;
-			audio = true;
+			if (++audios > BGPD_MAX_AUDIO)
+				return -1;
 			if (apply) {
-				m->audio.active = true;
-				memcpy(m->audio.addr, addr, BGPD_ADDR_SIZE);
-				m->audio.state = (enum bgpd_audio_state)state;
-				m->audio.volume = (int)v[0];
-				snprintf(m->audio.name, sizeof(m->audio.name),
-					 "%s", f[4]);
+				struct bgpd_audio_info *info =
+				    &m->audio[m->audio_count++];
+
+				info->active = true;
+				memcpy(info->addr, addr, BGPD_ADDR_SIZE);
+				info->state = (enum bgpd_audio_state)state;
+				info->volume = (int)v[0];
+				snprintf(info->name, sizeof(info->name), "%s",
+					 f[4]);
 			}
 		} else if (strcmp(f[0], "end") == 0 && n == 1) {
 			ended = true;
@@ -286,8 +294,6 @@ static int read_snapshot(struct bgpd_mgmt *m, const char *snapshot, bool apply)
 			return -1;
 		}
 	}
-	if (apply && !audio)
-		m->audio.active = false;
 	return state && ended ? 0 : -1;
 }
 
@@ -307,7 +313,11 @@ size_t bgpd_ipc_format(const struct bgpd_ipc_command *command, char *out,
 
 		if (commands[i].kind != command->kind)
 			continue;
-		if (commands[i].address) {
+		if (commands[i].address && commands[i].number) {
+			hex(command->addr, address);
+			n = snprintf(out, size, "%s %s %d\n", commands[i].word,
+				     address, command->value);
+		} else if (commands[i].address) {
 			hex(command->addr, address);
 			n = snprintf(out, size, "%s %s\n", commands[i].word,
 				     address);
@@ -339,6 +349,23 @@ int bgpd_ipc_parse(const char *line, struct bgpd_ipc_command *command)
 		    strncmp(line, commands[i].word, word) != 0)
 			continue;
 		command->kind = commands[i].kind;
+		if (commands[i].address && commands[i].number) {
+			char text[HEX_LENGTH + 1];
+			const char *space;
+			long value;
+
+			space = argument != NULL ? strchr(argument, ' ') : NULL;
+			if (space == NULL ||
+			    (size_t)(space - argument) != HEX_LENGTH)
+				return -1;
+			memcpy(text, argument, HEX_LENGTH);
+			text[HEX_LENGTH] = '\0';
+			if (!unhex(text, command->addr) ||
+			    !number(space + 1, 0, 100, &value))
+				return -1;
+			command->value = (int)value;
+			return 0;
+		}
 		if (commands[i].address)
 			return argument != NULL &&
 				       unhex(argument, command->addr)

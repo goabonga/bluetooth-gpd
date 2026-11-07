@@ -246,13 +246,18 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 		 m->scanning ? "active" : "stopped",
 		 (m->settings & BGPD_SETTING_DISCOVERABLE) != 0 ? "yes" : "no");
 	ctui_put(2, 2, COLS - 4, line, ctui_attr(CTUI_PAIR_HEADING, true));
-	if (m->audio.active) {
+	if (m->audio_count > 0) {
 		static const char *const states[] = {"connecting", "ready",
 						     "streaming"};
+		size_t used = (size_t)snprintf(line, sizeof(line), "Audio:");
 
-		snprintf(line, sizeof(line), "Audio: %.40s  %s  Volume %d%%",
-			 m->audio.name, states[m->audio.state],
-			 m->audio.volume);
+		for (size_t i = 0; i < m->audio_count && used < sizeof(line);
+		     i++)
+			used += (size_t)snprintf(
+			    line + used, sizeof(line) - used,
+			    "%s %.24s %s %d%%", i > 0 ? "  |" : "",
+			    m->audio[i].name, states[m->audio[i].state],
+			    m->audio[i].volume);
 		ctui_put(3, 2, COLS - 4, line,
 			 ctui_attr(CTUI_PAIR_MUTED, false));
 	}
@@ -305,17 +310,31 @@ static void scan(struct bgpd_ui *ui)
 
 #define VOLUME_STEP 5
 
-/* Raises or lowers the volume of the audio device in use. */
+/* The audio device the volume keys act on: the selected one, else the first. */
+static const struct bgpd_audio_info *volume_target(struct bgpd_ui *ui)
+{
+	const struct bgpd_mgmt *m = ui->mgmt;
+	const struct bgpd_device *d = selected_device(ui);
+
+	for (size_t i = 0; d != NULL && i < m->audio_count; i++)
+		if (memcmp(m->audio[i].addr, d->addr, BGPD_ADDR_SIZE) == 0)
+			return &m->audio[i];
+	return m->audio_count > 0 ? &m->audio[0] : NULL;
+}
+
+/* Raises or lowers the volume of an audio device. */
 static void change_volume(struct bgpd_ui *ui, int step)
 {
 	struct bgpd_ipc_command command = {.kind = BGPD_IPC_VOLUME};
-	int volume = ui->mgmt->audio.volume < 0 ? 50 : ui->mgmt->audio.volume;
+	const struct bgpd_audio_info *target = volume_target(ui);
+	int volume;
 
-	if (!ui->mgmt->audio.active) {
+	if (target == NULL) {
 		say(ui->mgmt, "No audio device connected");
 		return;
 	}
-	volume += step;
+	volume = (target->volume < 0 ? 50 : target->volume) + step;
+	memcpy(command.addr, target->addr, BGPD_ADDR_SIZE);
 	command.value = volume < 0 ? 0 : volume > 100 ? 100 : volume;
 	if (bgpd_ipc_send(ui->client, &command) < 0)
 		say(ui->mgmt, "The daemon is not reachable");

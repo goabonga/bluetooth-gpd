@@ -151,21 +151,40 @@ int main(void)
 	/* The volume keys need an audio device. */
 	CHECK(press(ui, '+') == NULL);
 	CHECK(strstr(mirror->status, "No audio device") != NULL);
-	daemon_state->audio.active = true;
-	memcpy(daemon_state->audio.addr, headset, BGPD_ADDR_SIZE);
-	snprintf(daemon_state->audio.name, sizeof(daemon_state->audio.name),
-		 "Headset");
-	daemon_state->audio.volume = 40;
+	daemon_state->audio_count = 1;
+	daemon_state->audio[0].active = true;
+	memcpy(daemon_state->audio[0].addr, headset, BGPD_ADDR_SIZE);
+	snprintf(daemon_state->audio[0].name,
+		 sizeof(daemon_state->audio[0].name), "Headset");
+	daemon_state->audio[0].volume = 40;
 	exchange(ui);
 	c = press(ui, '+');
 	CHECK(c != NULL && c->kind == BGPD_IPC_VOLUME && c->value == 45);
+	CHECK(c != NULL && memcmp(c->addr, headset, BGPD_ADDR_SIZE) == 0);
 	c = press(ui, '-');
 	CHECK(c != NULL && c->kind == BGPD_IPC_VOLUME && c->value == 35);
-	daemon_state->audio.volume = 98;
+	daemon_state->audio[0].volume = 98;
 	exchange(ui);
 	c = press(ui, '+');
 	CHECK(c != NULL && c->value == 100);
-	daemon_state->audio.active = false;
+	/* With several audio devices the keys act on the selected one. */
+	daemon_state->audio_count = 2;
+	daemon_state->audio[0] = (struct bgpd_audio_info){
+	    .active = true, .addr = {9, 9, 9, 9, 9, 9, 0}, .volume = 10};
+	snprintf(daemon_state->audio[0].name,
+		 sizeof(daemon_state->audio[0].name), "Speaker");
+	daemon_state->audio[1] =
+	    (struct bgpd_audio_info){.active = true, .volume = 60};
+	memcpy(daemon_state->audio[1].addr, headset, BGPD_ADDR_SIZE);
+	exchange(ui);
+	c = press(ui, '+'); /* the keyboard is selected: the first device */
+	CHECK(c != NULL && c->value == 15 && c->addr[0] == 9);
+	CHECK(press(ui, KEY_DOWN) == NULL); /* the headset is selected */
+	c = press(ui, '-');
+	CHECK(c != NULL && c->value == 55 &&
+	      memcmp(c->addr, headset, BGPD_ADDR_SIZE) == 0);
+	CHECK(press(ui, KEY_UP) == NULL);
+	daemon_state->audio_count = 0;
 	exchange(ui);
 
 	c = press(ui, 'p');

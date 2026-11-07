@@ -65,7 +65,9 @@ enum bgpd_prompt {
 #define BGPD_PROMPT_SIZE 256
 #define BGPD_INPUT_SIZE 17
 
-/* The audio device in use, kept here to be published to the interfaces. */
+#define BGPD_MAX_AUDIO 4
+
+/* An audio device in use, kept here to be published to the interfaces. */
 enum bgpd_audio_state {
 	BGPD_AUDIO_CONNECTING,
 	BGPD_AUDIO_READY,
@@ -104,7 +106,8 @@ struct bgpd_mgmt {
 	FILE *trace;	      /* packet log, or NULL */
 	uint64_t trace_start; /* bgpd_now() when the log was opened */
 	struct bgpd_devices devices;
-	struct bgpd_audio_info audio;
+	struct bgpd_audio_info audio[BGPD_MAX_AUDIO];
+	size_t audio_count;
 	struct bgpd_store store;
 };
 
