@@ -136,6 +136,25 @@ static void test_interface(void)
 			CHECK(bgpd_audio_active(&daemon->audio));
 			command(client, daemon, mirror, BGPD_IPC_TONE, classic);
 			CHECK(daemon->audio.tone_ms > 0);
+			/* The interface sees the audio device, and sets its
+			 * volume. */
+			CHECK(mirror->audio.active);
+			CHECK(mirror->audio.state == BGPD_AUDIO_CONNECTING);
+			CHECK(strcmp(mirror->audio.name, audio->name) == 0);
+			CHECK(mirror->audio.volume == 100);
+			{
+				struct bgpd_ipc_command volume = {
+				    .kind = BGPD_IPC_VOLUME, .value = 35};
+
+				CHECK(bgpd_ipc_send(client, &volume) == 0);
+				for (int i = 0; i < 5; i++) {
+					usleep(5000);
+					bgpd_daemon_poll(daemon);
+					bgpd_ipc_poll(client, mirror);
+				}
+				CHECK(daemon->audio.volume == 35);
+				CHECK(mirror->audio.volume == 35);
+			}
 			command(client, daemon, mirror, BGPD_IPC_DISCONNECT,
 				classic);
 			CHECK(!bgpd_audio_active(&daemon->audio));

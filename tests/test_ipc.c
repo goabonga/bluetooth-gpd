@@ -40,6 +40,11 @@ static void fill(struct bgpd_mgmt *m)
 	snprintf(m->status, sizeof(m->status), "Scanning\nnow");
 	snprintf(m->warning, sizeof(m->warning), "Mask bluetoothd");
 	snprintf(m->prompt, sizeof(m->prompt), "PIN for Keyboard?");
+	m->audio.active = true;
+	memcpy(m->audio.addr, remote, BGPD_ADDR_SIZE);
+	m->audio.state = BGPD_AUDIO_STREAMING;
+	m->audio.volume = 35;
+	snprintf(m->audio.name, sizeof(m->audio.name), "Head\tset");
 	d = bgpd_devices_get(&m->devices, remote);
 	if (d == NULL)
 		return;
@@ -83,11 +88,16 @@ static void test_round_trip(void)
 	CHECK(b->devices.items[0].paired && b->devices.items[0].connected);
 	CHECK(!b->devices.items[0].saved && b->devices.items[0].has_rssi);
 	CHECK(b->devices.items[0].rssi == -60);
+	CHECK(b->audio.active && b->audio.state == BGPD_AUDIO_STREAMING);
+	CHECK(b->audio.volume == 35 && strcmp(b->audio.name, "Head set") == 0);
+	CHECK(memcmp(b->audio.addr, remote, BGPD_ADDR_SIZE) == 0);
 
-	/* A new snapshot replaces the devices. */
+	/* A new snapshot replaces the devices and the audio device. */
 	a->devices.count = 0;
+	a->audio.active = false;
 	CHECK(bgpd_ipc_snapshot(a, snapshot, sizeof(snapshot)) > 0);
 	CHECK(bgpd_ipc_apply(b, snapshot) == 0 && b->devices.count == 0);
+	CHECK(!b->audio.active);
 
 	/* It does not fit in a small buffer. */
 	fill(a);
@@ -107,6 +117,11 @@ static void test_malformed(void)
 	    "state\t0\t2\t1\t0\t0\t0\t0\nend\n",
 	    "state\t0\t1\t1\t0\t0\t0\nend\n",
 	    "state\t0\t1\t1\t0\t0\t0\t0\nunknown\nend\n",
+	};
+	static const char *const bad_audio[] = {
+	    "audio\t55443322110001\tplaying\t10\tx\n",
+	    "audio\t55443322110001\tready\t101\tx\n",
+	    "audio\t5544\tready\t10\tx\n",
 	};
 	static const char *const bad_devices[] = {
 	    "device\t00\t0\t0\tx\n",
@@ -129,6 +144,11 @@ static void test_malformed(void)
 			 "state\t0\t1\t1\t0\t0\t0\t0\n%send\n", bad_devices[i]);
 		CHECK(bgpd_ipc_apply(m, text) == -1);
 	}
+	for (size_t i = 0; i < sizeof(bad_audio) / sizeof(bad_audio[0]); i++) {
+		snprintf(text, sizeof(text),
+			 "state\t0\t1\t1\t0\t0\t0\t0\n%send\n", bad_audio[i]);
+		CHECK(bgpd_ipc_apply(m, text) == -1);
+	}
 	/* A bad snapshot leaves the state untouched. */
 	snprintf(text, sizeof(text),
 		 "state\t1\t1\t1\t0\t0\t0\t0\nstatus\tx\nbad\nend\n");
@@ -144,7 +164,7 @@ static void test_commands(void)
 	size_t n;
 
 	memset(&in, 0, sizeof(in));
-	for (int kind = BGPD_IPC_SCAN; kind <= BGPD_IPC_UNPAIR; kind++) {
+	for (int kind = BGPD_IPC_SCAN; kind <= BGPD_IPC_TONE; kind++) {
 		in.kind = (enum bgpd_ipc_kind)kind;
 		memcpy(in.addr, remote, BGPD_ADDR_SIZE);
 		n = bgpd_ipc_format(&in, line, sizeof(line));
@@ -166,6 +186,18 @@ static void test_commands(void)
 	CHECK(strcmp(out.input, "123456") == 0);
 	CHECK(bgpd_ipc_parse("accept", &out) == 0 && out.input[0] == '\0');
 	CHECK(bgpd_ipc_format(&in, line, 5) == 0);
+
+	memset(&in, 0, sizeof(in));
+	in.kind = BGPD_IPC_VOLUME;
+	in.value = 42;
+	n = bgpd_ipc_format(&in, line, sizeof(line));
+	CHECK(strcmp(line, "volume 42\n") == 0 && n == 10);
+	CHECK(bgpd_ipc_parse("volume 42", &out) == 0 && out.value == 42);
+	CHECK(bgpd_ipc_parse("volume 0", &out) == 0 && out.value == 0);
+	CHECK(bgpd_ipc_parse("volume 101", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume -1", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume", &out) == -1);
+	CHECK(bgpd_ipc_parse("volume x", &out) == -1);
 
 	CHECK(bgpd_ipc_parse("", &out) == -1);
 	CHECK(bgpd_ipc_parse("scanning", &out) == -1);

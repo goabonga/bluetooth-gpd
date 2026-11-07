@@ -170,7 +170,7 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 	struct bgpd_mgmt *m = daemon->mgmt;
 	struct bgpd_device *d = NULL;
 
-	if (command->kind >= BGPD_IPC_PAIR) {
+	if (command->kind >= BGPD_IPC_PAIR && command->kind <= BGPD_IPC_TONE) {
 		d = bgpd_devices_get(&m->devices, command->addr);
 		if (d == NULL)
 			return;
@@ -213,6 +213,10 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 	case BGPD_IPC_TONE:
 		tone_command(daemon, d);
 		break;
+	case BGPD_IPC_VOLUME:
+		bgpd_audio_set_volume(&daemon->audio,
+				      (unsigned int)command->value);
+		break;
 	}
 }
 
@@ -238,6 +242,26 @@ static void release_slots(struct bgpd_daemon *daemon)
 	}
 }
 
+/* Copies the audio device in use where the interfaces get their state. */
+static void publish_audio(struct bgpd_daemon *daemon)
+{
+	const struct bgpd_audio *audio = &daemon->audio;
+	struct bgpd_audio_info *info = &daemon->mgmt->audio;
+
+	info->active = bgpd_audio_active(audio);
+	if (!info->active)
+		return;
+	memcpy(info->addr, audio->avdtp.addr, BGPD_ADDR_SIZE);
+	snprintf(info->name, sizeof(info->name), "%s", audio->avdtp.name);
+	info->volume = (int)audio->volume;
+	if (audio->avdtp.state == BGPD_AVDTP_STREAMING)
+		info->state = BGPD_AUDIO_STREAMING;
+	else if (audio->avdtp.state >= BGPD_AVDTP_READY)
+		info->state = BGPD_AUDIO_READY;
+	else
+		info->state = BGPD_AUDIO_CONNECTING;
+}
+
 void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 {
 	struct bgpd_mgmt *m = daemon->mgmt;
@@ -246,6 +270,7 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 	bgpd_mgmt_poll(m);
 	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
 	bgpd_audio_poll(&daemon->audio);
+	publish_audio(daemon);
 	if (daemon->audio.changed) {
 		daemon->audio.changed = false;
 		snprintf(m->status, sizeof(m->status), "%s",

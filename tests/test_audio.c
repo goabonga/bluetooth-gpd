@@ -150,6 +150,7 @@ static void test_client(void)
 	bgpd_audio_init(&audio);
 	audio.avdtp.open_channel = open_channel;
 	CHECK(bgpd_audio_listen(&audio, path) == 0);
+	bgpd_audio_set_volume(&audio, 50);
 
 	/* Without a device ready, the client is refused with the rate 0. */
 	refused = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -210,7 +211,8 @@ static void test_client(void)
 	CHECK(frames >= 66 && frames <= 69);
 	/* 1 kHz crosses zero 2000 times a second: 400 in 200 ms. */
 	CHECK(crossings > 370 && crossings < 430);
-	CHECK(peak > 7000 && peak < 9000);
+	/* At 50 % the gain is -25 dB: 8000 becomes about 440. */
+	CHECK(peak > 380 && peak < 500);
 	/* With the client gone and the audio played, the stream is suspended.
 	 */
 	for (int i = 0; i < 100 && audio.avdtp.state != BGPD_AVDTP_READY; i++) {

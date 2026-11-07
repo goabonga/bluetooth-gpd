@@ -33,6 +33,7 @@ void bgpd_audio_init(struct bgpd_audio *audio)
 {
 	memset(audio, 0, sizeof(*audio));
 	audio->listener = audio->client = -1;
+	audio->volume = 100;
 	bgpd_avdtp_init(&audio->avdtp);
 }
 
@@ -303,6 +304,29 @@ static void tone_frame(struct bgpd_audio *audio, int16_t *pcm)
 			       : 0;
 }
 
+void bgpd_audio_set_volume(struct bgpd_audio *audio, unsigned int percent)
+{
+	audio->volume = percent > 100U ? 100U : percent;
+}
+
+/* -50 dB at 1 % up to 0 dB at 100 %, silence at 0. */
+static double gain(unsigned int percent)
+{
+	if (percent == 0)
+		return 0.0;
+	return pow(10.0, -50.0 * (100.0 - percent) / 99.0 / 20.0);
+}
+
+static void apply_volume(const struct bgpd_audio *audio, int16_t *pcm)
+{
+	double g = gain(audio->volume);
+
+	if (audio->volume >= 100U)
+		return;
+	for (size_t i = 0; i < (size_t)audio->frame_samples * CHANNELS; i++)
+		pcm[i] = (int16_t)(pcm[i] * g);
+}
+
 /* True when a frame of audio can be taken from the tone or the client. */
 static bool have_frame(const struct bgpd_audio *audio)
 {
@@ -316,6 +340,7 @@ static void next_frame(struct bgpd_audio *audio, int16_t *pcm)
 
 	if (audio->tone_left > 0) {
 		tone_frame(audio, pcm);
+		apply_volume(audio, pcm);
 		return;
 	}
 	for (size_t i = 0; i < audio->frame_pcm; i++) {
@@ -323,6 +348,7 @@ static void next_frame(struct bgpd_audio *audio, int16_t *pcm)
 		audio->ring_head = (audio->ring_head + 1U) % BGPD_AUDIO_RING;
 	}
 	audio->ring_used -= audio->frame_pcm;
+	apply_volume(audio, pcm);
 }
 
 /* Encodes and sends the frames the sink needs by now. */
@@ -344,7 +370,7 @@ static void stream(struct bgpd_audio *audio)
 	}
 	while (due > audio->frames_sent && have_frame(audio)) {
 		uint8_t packet[MAX_FRAMES_PER_PACKET * 256];
-		int16_t pcm[1024];
+		int16_t pcm[1024] = {0};
 		size_t used = 0;
 		unsigned int count = 0;
 

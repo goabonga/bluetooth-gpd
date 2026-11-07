@@ -32,13 +32,15 @@ enum bgpd_ipc_kind {
 	BGPD_IPC_CONNECT,
 	BGPD_IPC_DISCONNECT,
 	BGPD_IPC_UNPAIR,
-	BGPD_IPC_TONE, /* plays a test tone on an audio device */
+	BGPD_IPC_TONE,	 /* plays a test tone on an audio device */
+	BGPD_IPC_VOLUME, /* sets the volume of the audio device in use */
 };
 
 struct bgpd_ipc_command {
 	enum bgpd_ipc_kind kind;
 	uint8_t addr[BGPD_ADDR_SIZE]; /* PAIR, CONNECT, DISCONNECT, UNPAIR */
 	char input[BGPD_INPUT_SIZE];  /* ACCEPT: PIN or passkey, or empty */
+	int value;		      /* VOLUME: 0 to 100 */
 };
 
 /*

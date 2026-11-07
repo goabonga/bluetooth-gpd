@@ -20,20 +20,21 @@
 static const struct {
 	const char *word;
 	enum bgpd_ipc_kind kind;
-	bool address, input;
+	bool address, input, number;
 } commands[] = {
-    {"scan", BGPD_IPC_SCAN, false, false},
-    {"power", BGPD_IPC_POWER, false, false},
-    {"adapter", BGPD_IPC_ADAPTER, false, false},
-    {"visible", BGPD_IPC_VISIBLE, false, false},
-    {"cancel", BGPD_IPC_CANCEL, false, false},
-    {"accept", BGPD_IPC_ACCEPT, false, true},
-    {"reject", BGPD_IPC_REJECT, false, false},
-    {"pair", BGPD_IPC_PAIR, true, false},
-    {"connect", BGPD_IPC_CONNECT, true, false},
-    {"disconnect", BGPD_IPC_DISCONNECT, true, false},
-    {"unpair", BGPD_IPC_UNPAIR, true, false},
-    {"tone", BGPD_IPC_TONE, true, false},
+    {"scan", BGPD_IPC_SCAN, false, false, false},
+    {"power", BGPD_IPC_POWER, false, false, false},
+    {"adapter", BGPD_IPC_ADAPTER, false, false, false},
+    {"visible", BGPD_IPC_VISIBLE, false, false, false},
+    {"cancel", BGPD_IPC_CANCEL, false, false, false},
+    {"accept", BGPD_IPC_ACCEPT, false, true, false},
+    {"reject", BGPD_IPC_REJECT, false, false, false},
+    {"pair", BGPD_IPC_PAIR, true, false, false},
+    {"connect", BGPD_IPC_CONNECT, true, false, false},
+    {"disconnect", BGPD_IPC_DISCONNECT, true, false, false},
+    {"unpair", BGPD_IPC_UNPAIR, true, false, false},
+    {"tone", BGPD_IPC_TONE, true, false, false},
+    {"volume", BGPD_IPC_VOLUME, false, false, true},
 };
 
 /* ---- writing ---- */
@@ -127,6 +128,16 @@ size_t bgpd_ipc_snapshot(const struct bgpd_mgmt *m, char *out, size_t size)
 		put(&o, "device\t%s\t%u\t%d\t%s\n", address, flags, d->rssi,
 		    name);
 	}
+	if (m->audio.active) {
+		static const char *const states[] = {"connecting", "ready",
+						     "streaming"};
+		char address[HEX_LENGTH + 1], name[BGPD_NAME_SIZE];
+
+		hex(m->audio.addr, address);
+		clean(m->audio.name, name, sizeof(name));
+		put(&o, "audio\t%s\t%s\t%d\t%s\n", address,
+		    states[m->audio.state], m->audio.volume, name);
+	}
 	put(&o, "end\n");
 	return o.full ? 0 : o.used;
 }
@@ -164,7 +175,7 @@ static int read_snapshot(struct bgpd_mgmt *m, const char *snapshot, bool apply)
 {
 	char line[BGPD_NAME_SIZE + 128];
 	size_t count = 0;
-	bool state = false, ended = false;
+	bool state = false, ended = false, audio = false;
 
 	if (apply)
 		m->devices.count = 0;
@@ -249,12 +260,34 @@ static int read_snapshot(struct bgpd_mgmt *m, const char *snapshot, bool apply)
 				d->has_rssi = (flags & FLAG_RSSI) != 0;
 				d->rssi = (int)v[1];
 			}
+		} else if (strcmp(f[0], "audio") == 0 && n == 5) {
+			static const char *const states[] = {
+			    "connecting", "ready", "streaming"};
+			uint8_t addr[BGPD_ADDR_SIZE];
+			size_t state = 0;
+
+			while (state < 3 && strcmp(f[2], states[state]) != 0)
+				state++;
+			if (!unhex(f[1], addr) || state == 3 ||
+			    !number(f[3], -1, 100, &v[0]))
+				return -1;
+			audio = true;
+			if (apply) {
+				m->audio.active = true;
+				memcpy(m->audio.addr, addr, BGPD_ADDR_SIZE);
+				m->audio.state = (enum bgpd_audio_state)state;
+				m->audio.volume = (int)v[0];
+				snprintf(m->audio.name, sizeof(m->audio.name),
+					 "%s", f[4]);
+			}
 		} else if (strcmp(f[0], "end") == 0 && n == 1) {
 			ended = true;
 		} else {
 			return -1;
 		}
 	}
+	if (apply && !audio)
+		m->audio.active = false;
 	return state && ended ? 0 : -1;
 }
 
@@ -278,6 +311,9 @@ size_t bgpd_ipc_format(const struct bgpd_ipc_command *command, char *out,
 			hex(command->addr, address);
 			n = snprintf(out, size, "%s %s\n", commands[i].word,
 				     address);
+		} else if (commands[i].number) {
+			n = snprintf(out, size, "%s %d\n", commands[i].word,
+				     command->value);
 		} else if (commands[i].input && command->input[0] != '\0') {
 			n = snprintf(out, size, "%s %s\n", commands[i].word,
 				     command->input);
@@ -308,6 +344,15 @@ int bgpd_ipc_parse(const char *line, struct bgpd_ipc_command *command)
 				       unhex(argument, command->addr)
 				   ? 0
 				   : -1;
+		if (commands[i].number) {
+			long value;
+
+			if (argument == NULL ||
+			    !number(argument, 0, 100, &value))
+				return -1;
+			command->value = (int)value;
+			return 0;
+		}
 		if (commands[i].input && argument != NULL) {
 			if (strlen(argument) >= sizeof(command->input))
 				return -1;

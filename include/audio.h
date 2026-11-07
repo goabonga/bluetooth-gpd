@@ -37,6 +37,7 @@ struct bgpd_audio {
 	uint64_t epoch;		    /* clock of the first frame */
 	uint64_t frames_sent;
 	bool sent_any;	      /* a frame was sent in this stream */
+	unsigned int volume;  /* 0 to 100: gain applied before the encoder */
 	uint32_t tone_ms;     /* test tone asked for, until the stream starts */
 	uint32_t tone_left;   /* samples of test tone still to play */
 	uint32_t tone_phase;  /* position in the tone, in samples */
@@ -57,6 +58,9 @@ int bgpd_audio_listen(struct bgpd_audio *audio, const char *path);
 
 /* $XDG_RUNTIME_DIR/bluetooth-audio.sock; -1 when there is no such directory. */
 int bgpd_audio_default_path(char *buffer, size_t size);
+
+/* Sets the volume, 0 to 100, applied to the audio before it is encoded. */
+void bgpd_audio_set_volume(struct bgpd_audio *audio, unsigned int percent);
 
 /* Starts connecting to a paired Classic audio device. */
 int bgpd_audio_connect(struct bgpd_audio *audio,
