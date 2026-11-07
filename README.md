@@ -77,6 +77,7 @@ connects as soon as it runs.
 | p | Pair the selected device |
 | c | Connect a paired device: a BLE device is served as an input device (HID over GATT), a Classic one opens its audio stream (A2DP) |
 | t | Play a three second test tone on the selected Classic audio device |
+| + / - | Raise or lower the volume of the audio device in use by 5 % |
 | d | Disconnect the selected device, which then stays disconnected |
 | x | Forget the device and its pairing, after confirmation |
 | o | Turn the adapter on or off |
@@ -96,7 +97,8 @@ local session (`sudo udevadm control --reload && sudo udevadm trigger
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
 negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
 53) and `t` plays a test tone through it, encoded with libsbc and paced in
-real time. Only one audio device is in use at a time.
+real time. Only one audio device is in use at a time. Its volume is applied by
+the daemon before the encoding, as a gain from -50 dB at 1 % to silence at 0.
 
 ## Playing audio
 
@@ -131,6 +133,20 @@ itself (after `v` made the adapter visible) is asked the same way, as an
 incoming pairing; requests are rejected when no interface is open to answer
 them. Address types are `BR` (Classic), `LE-P` (public LE) and `LE-R` (random LE); the flags are
 P paired, C connected and S key saved.
+
+## Control protocol
+
+Other programs can follow and drive the daemon on its control socket
+(`$XDG_RUNTIME_DIR/bluetooth.sock`, text lines). The daemon sends a snapshot
+of its state whenever it changes: tab-separated records `state`, `adapter`,
+`status`, `warning`, `prompt`, one `device` per device
+(`ADDR14 flags rssi name`, the address being 14 hexadecimal digits: six
+little-endian bytes and the type), an `audio` record when an audio device is
+in use (`ADDR14 connecting|ready|streaming volume name`, the volume being 0 to
+100) and `end`. A snapshot replaces the previous one. The client sends one
+command per line: `scan`, `power`, `adapter`, `visible`, `cancel`,
+`accept [input]`, `reject`, `pair`, `connect`, `disconnect`, `unpair` and `tone`
+followed by an address, and `volume N`. `include/ipc.h` is the reference.
 
 ## Tests
 
