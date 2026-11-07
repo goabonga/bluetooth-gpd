@@ -26,6 +26,8 @@ enum bgpd_mgmt_op {
 	BGPD_OP_INDEX_LIST = 0x0003,
 	BGPD_OP_INFO = 0x0004,
 	BGPD_OP_POWER = 0x0005,
+	BGPD_OP_DISCOVERABLE = 0x0006,
+	BGPD_OP_CONNECTABLE = 0x0007,
 	BGPD_OP_BONDABLE = 0x0009,
 	BGPD_OP_SSP = 0x000b,
 	BGPD_OP_LE = 0x000d,
@@ -57,6 +59,8 @@ enum bgpd_prompt {
 	BGPD_PROMPT_PASSKEY = 0x10,
 };
 
+#define BGPD_SETTING_CONNECTABLE (1U << 1U)
+#define BGPD_SETTING_DISCOVERABLE (1U << 3U)
 #define BGPD_STATUS_SIZE 512
 #define BGPD_PROMPT_SIZE 256
 #define BGPD_INPUT_SIZE 17
@@ -129,6 +133,13 @@ void bgpd_mgmt_poll(struct bgpd_mgmt *m);
 
 /* Handles one packet read from the socket. */
 void bgpd_mgmt_packet(struct bgpd_mgmt *m, const uint8_t *packet, size_t size);
+
+/*
+ * Makes the adapter visible to other devices, so that they can start the
+ * pairing, for two minutes; calling it again hides it. The authentication
+ * requests of those devices are then handled like the ones of bgpd_mgmt_pair.
+ */
+void bgpd_mgmt_discoverable(struct bgpd_mgmt *m);
 
 /* Starts or stops scanning for Classic and LE devices. */
 void bgpd_mgmt_scan(struct bgpd_mgmt *m);

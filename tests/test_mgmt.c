@@ -171,6 +171,36 @@ static void test_power(void)
 	reply(BGPD_OP_POWER, 0, settings, sizeof(settings));
 }
 
+static void test_discoverable(void)
+{
+	uint8_t settings[4];
+
+	bgpd_mgmt_discoverable(m);
+	CHECK(expect(BGPD_OP_CONNECTABLE) == 1 && packet[6] == 1);
+	bgpd_put32(settings, m->settings | BGPD_SETTING_CONNECTABLE);
+	reply(BGPD_OP_CONNECTABLE, 0, settings, sizeof(settings));
+	CHECK(expect(BGPD_OP_DISCOVERABLE) == 3);
+	CHECK(packet[6] == 1 && bgpd_get16(packet + 7) == 120);
+	bgpd_put32(settings, m->settings | BGPD_SETTING_DISCOVERABLE);
+	reply(BGPD_OP_DISCOVERABLE, 0, settings, sizeof(settings));
+	CHECK((m->settings & BGPD_SETTING_DISCOVERABLE) != 0);
+	CHECK(strstr(m->status, "Visible") != NULL);
+
+	/* The kernel ends the visibility by itself. */
+	bgpd_put32(settings, m->settings & ~BGPD_SETTING_DISCOVERABLE);
+	event(0x06, m->index, settings, sizeof(settings));
+	CHECK((m->settings & BGPD_SETTING_DISCOVERABLE) == 0);
+
+	/* Calling it again hides the adapter. */
+	bgpd_put32(settings, m->settings | BGPD_SETTING_DISCOVERABLE);
+	event(0x06, m->index, settings, sizeof(settings));
+	bgpd_mgmt_discoverable(m);
+	CHECK(expect(BGPD_OP_DISCOVERABLE) == 3 && packet[6] == 0);
+	bgpd_put32(settings, m->settings & ~BGPD_SETTING_DISCOVERABLE);
+	reply(BGPD_OP_DISCOVERABLE, 0, settings, sizeof(settings));
+	CHECK(strstr(m->status, "No longer") != NULL);
+}
+
 static void test_keys(void)
 {
 	uint8_t key[26] = {1};
@@ -395,6 +425,7 @@ int main(void)
 	test_scan();
 	test_scan_ended_by_the_kernel();
 	test_power();
+	test_discoverable();
 	test_keys();
 	test_pairing();
 	test_cancel_and_failure();

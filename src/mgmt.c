@@ -457,9 +457,44 @@ static void prepare_pair(struct bgpd_mgmt *m)
 	start_pair(m);
 }
 
+#define VISIBLE_SECONDS 120U
+
+/* Enables what the pairing of other devices needs, then the visibility. */
+static void prepare_discoverable(struct bgpd_mgmt *m)
+{
+	uint8_t on = 1;
+	uint8_t visible[3] = {1, 0, 0};
+
+	if ((m->settings & BGPD_SETTING_DISCOVERABLE) != 0) {
+		const uint8_t hidden[3] = {0, 0, 0};
+
+		m->prepare_action = 0;
+		command(m, BGPD_OP_DISCOVERABLE, hidden, sizeof(hidden));
+		return;
+	}
+	if ((m->settings & SETTING_BONDABLE) == 0) {
+		command(m, BGPD_OP_BONDABLE, &on, 1);
+		return;
+	}
+	if ((m->supported & SETTING_SSP) != 0 &&
+	    (m->settings & SETTING_SSP) == 0) {
+		command(m, BGPD_OP_SSP, &on, 1);
+		return;
+	}
+	if ((m->settings & BGPD_SETTING_CONNECTABLE) == 0) {
+		command(m, BGPD_OP_CONNECTABLE, &on, 1);
+		return;
+	}
+	m->prepare_action = 0;
+	bgpd_put16(visible + 1, (uint16_t)VISIBLE_SECONDS);
+	command(m, BGPD_OP_DISCOVERABLE, visible, sizeof(visible));
+}
+
 static void prepare(struct bgpd_mgmt *m)
 {
-	if (m->prepare_action == BGPD_OP_START_DISCOVERY)
+	if (m->prepare_action == BGPD_OP_DISCOVERABLE)
+		prepare_discoverable(m);
+	else if (m->prepare_action == BGPD_OP_START_DISCOVERY)
 		prepare_scan(m);
 	else if (m->prepare_action == BGPD_OP_PAIR)
 		prepare_pair(m);
@@ -484,6 +519,18 @@ void bgpd_mgmt_scan(struct bgpd_mgmt *m)
 		return;
 	}
 	m->prepare_action = BGPD_OP_START_DISCOVERY;
+	prepare(m);
+}
+
+void bgpd_mgmt_discoverable(struct bgpd_mgmt *m)
+{
+	if (!m->ready || m->command != 0)
+		return;
+	if ((m->settings & SETTING_POWERED) == 0) {
+		say(m, "Turn the adapter on first");
+		return;
+	}
+	m->prepare_action = BGPD_OP_DISCOVERABLE;
 	prepare(m);
 }
 
@@ -709,7 +756,18 @@ static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 	case BGPD_OP_CONNECTIONS:
 		on_connections(m, p, size, &ok);
 		break;
+	case BGPD_OP_DISCOVERABLE:
+		if (size < 4) {
+			ok = false;
+			break;
+		}
+		apply_settings(m, bgpd_get32(p));
+		say(m, (m->settings & BGPD_SETTING_DISCOVERABLE) != 0
+			   ? "Visible: devices can pair with this computer"
+			   : "No longer visible");
+		break;
 	case BGPD_OP_POWER:
+	case BGPD_OP_CONNECTABLE:
 	case BGPD_OP_BONDABLE:
 	case BGPD_OP_SSP:
 	case BGPD_OP_LE:
