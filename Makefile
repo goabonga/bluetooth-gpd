@@ -9,7 +9,10 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
 
-LIB_OBJ := $(BUILD)/bgpd.o
+CORE    := bgpd
+CORE_C  := $(CORE:%=src/%.c)
+LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
+TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 
 .PHONY: help all test format format-check lint clean install
 
@@ -23,7 +26,7 @@ all: $(BUILD)/bluetooth ## Build everything
 $(BUILD)/bluetooth: $(BUILD)/main.o $(LIB_OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-$(BUILD)/%.o: src/%.c include/bgpd.h | $(BUILD)
+$(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD):
@@ -31,12 +34,12 @@ $(BUILD):
 
 # Unit tests, built with the address and undefined behaviour sanitizers.
 # Disable them with `make test SANITIZE=` where the platform rejects them.
-test: $(BUILD)/test_bgpd ## Build and run the unit tests
-	$(BUILD)/test_bgpd
+test: $(TESTS) ## Build and run the unit tests
+	@for t in $(TESTS); do echo $$t; $$t || exit 1; done
 
-$(BUILD)/test_bgpd: tests/test_bgpd.c src/bgpd.c include/bgpd.h | $(BUILD)
+$(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -g $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
-		$(LDFLAGS) -o $@ tests/test_bgpd.c src/bgpd.c
+		$(LDFLAGS) -o $@ $< $(CORE_C)
 
 format: ## Format the sources with clang-format
 	clang-format -i $(SOURCES)
