@@ -33,12 +33,14 @@ $(BUILD):
 	mkdir -p $@
 
 # Unit tests, built with the address and undefined behaviour sanitizers.
-# Disable them with `make test SANITIZE=` where the platform rejects them.
+# -fno-pie -no-pie: on linux-hardened a PIE lands inside the ASan shadow
+# range. Disable the sanitizers with `make test SANITIZE=` where the
+# platform rejects them.
 test: $(TESTS) ## Build and run the unit tests
 	@for t in $(TESTS); do echo $$t; $$t || exit 1; done
 
 $(BUILD)/test_%: tests/test_%.c $(CORE_C) $(wildcard include/*.h) | $(BUILD)
-	$(CC) $(CFLAGS) -g $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
+	$(CC) $(CFLAGS) -g -fno-pie -no-pie $(if $(SANITIZE),-fsanitize=$(SANITIZE) -fno-sanitize-recover=all) \
 		$(LDFLAGS) -o $@ $< $(CORE_C)
 
 format: ## Format the sources with clang-format
