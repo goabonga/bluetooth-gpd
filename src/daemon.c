@@ -3,6 +3,7 @@
 
 #include "daemon.h"
 
+#include <stdio.h>
 #include <string.h>
 
 void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
@@ -13,6 +14,14 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 	daemon->log = log;
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_init(&daemon->slots[i].hog);
+	daemon->ipc.listener = -1;
+	for (size_t i = 0; i < BGPD_IPC_MAX_CLIENTS; i++)
+		daemon->ipc.peers[i].fd = -1;
+}
+
+int bgpd_daemon_listen(struct bgpd_daemon *daemon, const char *path)
+{
+	return bgpd_ipc_listen(&daemon->ipc, path);
 }
 
 static struct bgpd_daemon_slot *find_slot(struct bgpd_daemon *daemon,
@@ -36,14 +45,155 @@ static struct bgpd_daemon_slot *find_slot(struct bgpd_daemon *daemon,
 	return free_slot;
 }
 
+static void log_line(struct bgpd_daemon *daemon, const char *text)
+{
+	if (daemon->log == NULL)
+		return;
+	snprintf(daemon->logged, sizeof(daemon->logged), "%s", text);
+	fprintf(daemon->log, "%s\n", text);
+	fflush(daemon->log);
+}
+
 static void report(struct bgpd_daemon *daemon, struct bgpd_daemon_slot *slot)
 {
 	if (!slot->hog.changed)
 		return;
 	slot->hog.changed = false;
-	if (daemon->log != NULL) {
-		fprintf(daemon->log, "%s\n", slot->hog.status);
-		fflush(daemon->log);
+	snprintf(daemon->mgmt->status, sizeof(daemon->mgmt->status), "%s",
+		 slot->hog.status);
+	log_line(daemon, slot->hog.status);
+}
+
+void bgpd_daemon_log_changes(struct bgpd_daemon *daemon)
+{
+	if (daemon->mgmt->status[0] != '\0' &&
+	    strcmp(daemon->logged, daemon->mgmt->status) != 0)
+		log_line(daemon, daemon->mgmt->status);
+}
+
+static struct bgpd_daemon_slot *slot_of(struct bgpd_daemon *daemon,
+					const uint8_t addr[BGPD_ADDR_SIZE])
+{
+	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
+		if (daemon->slots[i].used &&
+		    memcmp(daemon->slots[i].addr, addr, BGPD_ADDR_SIZE) == 0)
+			return &daemon->slots[i];
+	return NULL;
+}
+
+static void connect_command(struct bgpd_daemon *daemon,
+			    const struct bgpd_device *d)
+{
+	struct bgpd_mgmt *m = daemon->mgmt;
+	struct bgpd_daemon_slot *s;
+
+	if (d->addr[6] == BGPD_ADDR_BREDR) {
+		snprintf(m->status, sizeof(m->status),
+			 "Classic devices connect through audio (not "
+			 "available)");
+		return;
+	}
+	if (!d->paired) {
+		snprintf(m->status, sizeof(m->status), "Pair the device first");
+		return;
+	}
+	s = find_slot(daemon, d->addr);
+	if (s != NULL) {
+		s->held = false;
+		s->retry = 0;
+	}
+}
+
+static void disconnect_command(struct bgpd_daemon *daemon,
+			       const struct bgpd_device *d)
+{
+	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
+
+	if (s != NULL) {
+		s->held = true;
+		bgpd_hog_close(&s->hog);
+	}
+	bgpd_mgmt_disconnect(daemon->mgmt, d);
+}
+
+static void unpair_command(struct bgpd_daemon *daemon,
+			   const struct bgpd_device *d)
+{
+	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
+
+	/* The slot is released once the kernel reports the device unpaired. */
+	if (s != NULL) {
+		s->held = true;
+		bgpd_hog_close(&s->hog);
+	}
+	bgpd_mgmt_unpair(daemon->mgmt, d);
+}
+
+static void handle(void *context, const struct bgpd_ipc_command *command)
+{
+	struct bgpd_daemon *daemon = context;
+	struct bgpd_mgmt *m = daemon->mgmt;
+	struct bgpd_device *d = NULL;
+
+	if (command->kind >= BGPD_IPC_PAIR) {
+		d = bgpd_devices_get(&m->devices, command->addr);
+		if (d == NULL)
+			return;
+	}
+	switch (command->kind) {
+	case BGPD_IPC_SCAN:
+		bgpd_mgmt_scan(m);
+		break;
+	case BGPD_IPC_POWER:
+		bgpd_mgmt_toggle_power(m);
+		break;
+	case BGPD_IPC_ADAPTER:
+		bgpd_mgmt_next_adapter(m);
+		break;
+	case BGPD_IPC_CANCEL:
+		bgpd_mgmt_cancel_pair(m);
+		break;
+	case BGPD_IPC_ACCEPT:
+		snprintf(m->input, sizeof(m->input), "%s", command->input);
+		bgpd_mgmt_reply(m, true);
+		break;
+	case BGPD_IPC_REJECT:
+		bgpd_mgmt_reply(m, false);
+		break;
+	case BGPD_IPC_PAIR:
+		bgpd_mgmt_pair(m, d);
+		break;
+	case BGPD_IPC_CONNECT:
+		connect_command(daemon, d);
+		break;
+	case BGPD_IPC_DISCONNECT:
+		disconnect_command(daemon, d);
+		break;
+	case BGPD_IPC_UNPAIR:
+		unpair_command(daemon, d);
+		break;
+	}
+}
+
+/* Frees the slots of devices that are no longer paired. */
+static void release_slots(struct bgpd_daemon *daemon)
+{
+	const struct bgpd_mgmt *m = daemon->mgmt;
+
+	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++) {
+		struct bgpd_daemon_slot *s = &daemon->slots[i];
+		bool paired = false;
+
+		if (!s->used)
+			continue;
+		for (size_t j = 0; j < m->devices.count; j++)
+			if (memcmp(m->devices.items[j].addr, s->addr,
+				   BGPD_ADDR_SIZE) == 0)
+				paired = m->devices.items[j].paired;
+		if (!paired) {
+			bgpd_hog_close(&s->hog);
+			s->used = s->held = false;
+		}
 	}
 }
 
@@ -53,12 +203,14 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 	uint64_t now = bgpd_now();
 
 	bgpd_mgmt_poll(m);
+	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++) {
 		bgpd_hog_poll(&daemon->slots[i].hog);
 		report(daemon, &daemon->slots[i]);
 	}
 	if (!m->ready)
 		return;
+	release_slots(daemon);
 	for (size_t i = 0; i < m->devices.count; i++) {
 		const struct bgpd_device *d = &m->devices.items[i];
 		struct bgpd_daemon_slot *s;
@@ -66,7 +218,8 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 		if (!d->paired || d->addr[6] == BGPD_ADDR_BREDR)
 			continue;
 		s = find_slot(daemon, d->addr);
-		if (s == NULL || bgpd_hog_active(&s->hog) || now < s->retry)
+		if (s == NULL || s->held || bgpd_hog_active(&s->hog) ||
+		    now < s->retry)
 			continue;
 		s->retry = now + BGPD_DAEMON_RETRY_MS;
 		s->hog.trace = m->trace;
@@ -88,6 +241,7 @@ size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 
 void bgpd_daemon_close(struct bgpd_daemon *daemon)
 {
+	bgpd_ipc_server_close(&daemon->ipc);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_close(&daemon->slots[i].hog);
 }

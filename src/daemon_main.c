@@ -14,9 +14,9 @@
 
 #define USAGE                                                                  \
 	"Usage: bluetooth-daemon [--adapter hci0] [--state-dir DIR] "          \
-	"[--trace FILE]\n"                                                     \
+	"[--socket PATH] [--trace FILE]\n"                                     \
 	"Keeps the paired Bluetooth LE devices connected through the Linux "   \
-	"kernel.\n"
+	"kernel and serves the interfaces on a Unix socket.\n"
 
 static volatile sig_atomic_t quitting;
 
@@ -47,15 +47,10 @@ static bool adapter_index(const char *text, uint16_t *index)
 static void run(struct bgpd_daemon *daemon)
 {
 	struct pollfd p = {.fd = daemon->mgmt->fd, .events = POLLIN};
-	char last[BGPD_STATUS_SIZE] = "";
 
 	while (!quitting) {
 		bgpd_daemon_poll(daemon);
-		if (strcmp(last, daemon->mgmt->status) != 0) {
-			snprintf(last, sizeof(last), "%s",
-				 daemon->mgmt->status);
-			fprintf(stderr, "%s\n", last);
-		}
+		bgpd_daemon_log_changes(daemon);
 		/* Wakes on kernel events, and often enough for the HID links.
 		 */
 		if (poll(&p, 1, 50) < 0 && errno != EINTR)
@@ -69,7 +64,8 @@ int main(int argc, char **argv)
 	struct bgpd_daemon *daemon = calloc(1, sizeof(*daemon));
 	char state_dir[4096];
 	uint16_t adapter = BGPD_NO_INDEX;
-	const char *dir = NULL, *trace = NULL;
+	char socket_path[108];
+	const char *dir = NULL, *trace = NULL, *sock = NULL;
 	int status = 0;
 
 	if (m == NULL || daemon == NULL) {
@@ -78,6 +74,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	bgpd_mgmt_init(m, BGPD_NO_INDEX, NULL);
+	bgpd_daemon_init(daemon, m, stderr);
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--version") == 0) {
 			puts(BGPD_VERSION);
@@ -88,6 +85,8 @@ int main(int argc, char **argv)
 			goto done;
 		} else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
 			trace = argv[++i];
+		} else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
+			sock = argv[++i];
 		} else if (strcmp(argv[i], "--state-dir") == 0 &&
 			   i + 1 < argc) {
 			dir = argv[++i];
@@ -128,10 +127,23 @@ int main(int argc, char **argv)
 	signal(SIGINT, interrupted);
 	signal(SIGTERM, interrupted);
 	signal(SIGPIPE, SIG_IGN);
-	bgpd_daemon_init(daemon, m, stderr);
+	if (sock == NULL) {
+		if (bgpd_ipc_default_path(socket_path, sizeof(socket_path)) <
+		    0) {
+			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
+			status = 1;
+			goto done;
+		}
+		sock = socket_path;
+	}
+	if (bgpd_daemon_listen(daemon, sock) < 0) {
+		fprintf(stderr, "Socket %s: %s\n", sock, strerror(errno));
+		status = 1;
+		goto done;
+	}
 	run(daemon);
-	bgpd_daemon_close(daemon);
 done:
+	bgpd_daemon_close(daemon);
 	bgpd_mgmt_close(m);
 	free(daemon);
 	free(m);
