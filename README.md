@@ -48,6 +48,7 @@ program warns when it runs, and `systemctl stop bluetooth` fixes it.
 | Up/Down, k/j | Select a device |
 | s | Start or stop scanning (Classic and LE) |
 | p | Pair the selected device |
+| c | Connect a paired BLE device and serve it as an input device (HID over GATT) |
 | d | Disconnect the selected device |
 | x | Forget the device and its pairing, after confirmation |
 | o | Turn the adapter on or off |
@@ -55,6 +56,13 @@ program warns when it runs, and `systemctl stop bluetooth` fixes it.
 | Tab | Show all devices or the paired ones |
 | Esc | Cancel the pairing in progress |
 | q | Quit |
+
+A BLE keyboard, mouse or game controller (HID over GATT, such as a Flipper
+Zero in keyboard mode) is connected right after its pairing and with `c`:
+the program reads its report map and forwards its reports to the kernel
+through `/dev/uhid`, which the user needs to be allowed to open. A device
+stays connected only while the program runs, and Classic devices are not
+connected yet.
 
 Pairing prompts (confirmation code, PIN of 1 to 16 characters, passkey of up
 to 6 digits) open a dialog; unsolicited requests are rejected. Address types
