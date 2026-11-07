@@ -12,7 +12,7 @@ its terms.
 ## Development setup
 
 You need a C11 compiler (gcc or clang), `make`, `pkg-config`, ncursesw,
-[libsbc](https://github.com/bluez/sbc) (`sbc`),
+[libsbc](https://github.com/bluez/sbc) (`sbc`), alsa-lib,
 [ctui](https://github.com/goabonga/ctui) (installed, or checked out next to
 this repository in `../ctui`; `make CTUI_DIR=path` always uses that checkout),
 `clang-format` and `clang-tidy`.

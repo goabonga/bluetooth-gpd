@@ -8,7 +8,7 @@ Terminal Bluetooth manager for Linux, built on ctui.
 
 ## Build
 
-Requires a C11 compiler, GNU make, pkg-config, ncursesw, libsbc (`sbc`) and the
+Requires a C11 compiler, GNU make, pkg-config, ncursesw, libsbc (`sbc`), alsa-lib and the
 [ctui](https://github.com/goabonga/ctui) library, found through `ctui.pc`
 when installed, else in `../ctui`. `CTUI_DIR=path` always uses that checkout
 instead, even when ctui is installed, to develop against a local ctui; it is
@@ -40,6 +40,11 @@ only the owner can use.
 
 The kernel requires `CAP_NET_ADMIN` to open the management socket. The
 daemon drops every capability once it is open, so grant it to the binary:
+
+File capabilities are ignored on a `nosuid` filesystem (`/home` often is), so
+install the binary first (`sudo make install`) rather than running the one in
+`build/`. Run the daemon as your user, not as root: its sockets belong to the
+user of the interface.
 
 ```bash
 sudo make install-capabilities
@@ -91,8 +96,34 @@ local session (`sudo udevadm control --reload && sudo udevadm trigger
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
 negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
 53) and `t` plays a test tone through it, encoded with libsbc and paced in
-real time. Only one audio device is in use at a time, and the audio stream
-is suspended when the tone ends. Audio from applications is not routed yet.
+real time. Only one audio device is in use at a time.
+
+## Playing audio
+
+Applications play through the ALSA PCM `bluetooth_out` (`make install`
+puts `libasound_module_pcm_bluetooth.so` in `$(ALSA_PLUGIN_DIR)`, default
+`$(PREFIX)/lib/alsa-lib`, and the definitions in
+`$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf`; ALSA only loads
+plugins from its own directory, so use `PREFIX=/usr`):
+
+```bash
+aplay -D bluetooth_out music.wav
+```
+
+```
+application -> bluetooth_out -> plug -> bluetooth plugin --(socket)--> bluetooth-daemon -> SBC -> headset
+```
+
+The plugin talks to the audio socket of the daemon,
+`$XDG_RUNTIME_DIR/bluetooth-audio.sock` (`--audio-socket PATH`; `server "PATH"`
+in the PCM definition). It sends `BGPDPCM1`, receives the sample rate
+negotiated with the device (4 bytes, little-endian, 0 when no device is ready)
+and then writes signed 16-bit little-endian stereo PCM, which the daemon
+encodes and sends at the speed of the stream. The PCM cannot be opened until
+an audio device is connected (`c` in the interface), and it has only that
+rate: `plug` converts the rest. The stream is suspended once the client has
+left and its audio has been played. A program such as `mixer-daemon` can use
+`bluetooth_out` as its output PCM.
 
 Pairing prompts (confirmation code, PIN of 1 to 16 characters, passkey of up
 to 6 digits) open a dialog in the interface. A device that starts the pairing
