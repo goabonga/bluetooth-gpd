@@ -3,7 +3,7 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2
-CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude
+CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
 SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
@@ -48,7 +48,7 @@ format-check: ## Fail when a source is not formatted
 	clang-format --dry-run -Werror $(SOURCES)
 
 lint: ## Run clang-tidy on the sources
-	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -Iinclude
+	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude
 
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
