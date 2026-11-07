@@ -135,13 +135,34 @@ static void draw_bars(struct bgpd_ui *ui)
 	ctui_statusbar_draw(LINES - 1, left, 2, right, 1);
 }
 
+/* Creates the dialog of a prompt that has just appeared. */
+static void sync_dialog(struct bgpd_ui *ui)
+{
+	struct bgpd_mgmt *m = ui->mgmt;
+
+	if (m->prompt_kind == ui->shown_prompt)
+		return;
+	ui->shown_prompt = m->prompt_kind;
+	if (m->prompt_kind == BGPD_PROMPT_CONFIRM)
+		ctui_confirm_init(&ui->confirm, m->prompt, NULL);
+	else if (m->prompt_kind != BGPD_PROMPT_NONE)
+		ctui_prompt_init(&ui->entry, m->prompt, m->input,
+				 sizeof(m->input));
+}
+
 static void draw_dialog(struct bgpd_ui *ui)
 {
+	bool typing = !ui->forgetting &&
+		      ui->mgmt->prompt_kind != BGPD_PROMPT_NONE &&
+		      ui->mgmt->prompt_kind != BGPD_PROMPT_CONFIRM;
+
+	sync_dialog(ui);
+	curs_set(typing ? 1 : 0);
 	if (ui->forgetting)
 		ctui_confirm_draw(&ui->forget);
 	else if (ui->mgmt->prompt_kind == BGPD_PROMPT_CONFIRM)
 		ctui_confirm_draw(&ui->confirm);
-	else if (ui->mgmt->prompt_kind != BGPD_PROMPT_NONE)
+	else if (typing)
 		ctui_prompt_draw(&ui->entry);
 }
 
@@ -280,21 +301,6 @@ static bool dialog_key(struct bgpd_ui *ui, int key)
 	if (result != CTUI_DIALOG_OPEN)
 		bgpd_mgmt_reply(m, result == CTUI_DIALOG_ACCEPTED);
 	return true;
-}
-
-/* Creates the dialog of a prompt that has just appeared. */
-static void sync_dialog(struct bgpd_ui *ui)
-{
-	struct bgpd_mgmt *m = ui->mgmt;
-
-	if (m->prompt_kind == ui->shown_prompt)
-		return;
-	ui->shown_prompt = m->prompt_kind;
-	if (m->prompt_kind == BGPD_PROMPT_CONFIRM)
-		ctui_confirm_init(&ui->confirm, m->prompt, NULL);
-	else if (m->prompt_kind != BGPD_PROMPT_NONE)
-		ctui_prompt_init(&ui->entry, m->prompt, m->input,
-				 sizeof(m->input));
 }
 
 bool bgpd_ui_key(struct bgpd_ui *ui, int key)
