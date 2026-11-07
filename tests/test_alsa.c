@@ -8,6 +8,7 @@
  * (the plugin is built next to PROGRAM).
  */
 #include "audio.h"
+#include "streams.h"
 
 #include <alsa/asoundlib.h>
 #include <libgen.h>
@@ -39,6 +40,21 @@ static const uint8_t headset[BGPD_ADDR_SIZE] = {
     1, 2, 3, 4, 5, 6, BGPD_ADDR_BREDR};
 
 static struct bgpd_audio audio;
+static struct bgpd_streams streams;
+static struct bgpd_stream_request last_request; /* the client greeted last */
+static bool greeted;
+
+/* Plays the part of the daemon: the clients are given to the device. */
+static void route_clients(void)
+{
+	struct bgpd_stream_request request;
+
+	while (bgpd_streams_next(&streams, &request)) {
+		last_request = request;
+		greeted = true;
+		bgpd_audio_attach(&audio, request.fd);
+	}
+}
 static int sink_sig, sink_media, channels[2], next_channel;
 
 static int open_channel(const uint8_t addr[BGPD_ADDR_SIZE])
@@ -87,8 +103,9 @@ static void serve_command(const uint8_t *answer, size_t size)
 	bgpd_audio_poll(&audio);
 }
 
-/* The program under test: opens the PCM named bt_test and plays a tone. */
-static int play(const char *config, unsigned int milliseconds)
+/* The program under test: opens a PCM and plays a tone. */
+static int play(const char *config, const char *pcm_name,
+		unsigned int milliseconds)
 {
 	snd_pcm_t *pcm;
 	int16_t block[2 * 441];
@@ -96,7 +113,7 @@ static int play(const char *config, unsigned int milliseconds)
 	int err;
 
 	setenv("ALSA_CONFIG_PATH", config, 1);
-	err = snd_pcm_open(&pcm, "bt_test", SND_PCM_STREAM_PLAYBACK, 0);
+	err = snd_pcm_open(&pcm, pcm_name, SND_PCM_STREAM_PLAYBACK, 0);
 	if (err < 0)
 		return 10;
 	err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE,
@@ -134,6 +151,7 @@ static bool wait_child(pid_t child, int *code, sbc_t *decoder,
 	ssize_t n;
 
 	while (now_ms() - start < 8000) {
+		route_clients();
 		bgpd_audio_poll(&audio);
 		accept_pending();
 		while ((n = read(sink_media, packet, sizeof(packet))) > 0) {
@@ -220,7 +238,7 @@ static int record(const char *config)
 static void fake_microphone(int listener, unsigned int rate)
 {
 	struct pollfd p = {.fd = listener, .events = POLLIN};
-	uint8_t greeting[8], bytes[4];
+	uint8_t greeting[23], bytes[4];
 	int16_t samples[160];
 	int fd;
 
@@ -232,8 +250,8 @@ static void fake_microphone(int listener, unsigned int rate)
 	CHECK(fd >= 0);
 	if (fd < 0)
 		return;
-	CHECK(read(fd, greeting, sizeof(greeting)) == 8);
-	CHECK(memcmp(greeting, "BGPDCAP1", 8) == 0);
+	CHECK(read(fd, greeting, sizeof(greeting)) == 23);
+	CHECK(memcmp(greeting, "BGPDCAP200000000000000\n", 23) == 0);
 	for (unsigned int i = 0; i < 4; i++)
 		bytes[i] = (uint8_t)(rate >> (8U * i));
 	CHECK(write(fd, bytes, 4) == 4);
@@ -312,13 +330,17 @@ int main(int argc, char **argv)
 	f = fopen(config, "w");
 	if (f == NULL)
 		return 2;
-	fprintf(f,
-		"</usr/share/alsa/alsa.conf>\n"
-		"pcm_type.bluetooth { lib \"%s\" }\n"
-		"pcm.bt_test { type bluetooth server \"%s\" }\n"
-		"pcm.bt_capture { type bluetooth capture_server "
-		"\"%s/capture.sock\" }\n",
-		plugin, socket_path, dir);
+	fprintf(
+	    f,
+	    "</usr/share/alsa/alsa.conf>\n"
+	    "pcm_type.bluetooth { lib \"%s\" }\n"
+	    "pcm.bt_test { type bluetooth server \"%s\" }\n"
+	    "pcm.bt_bad { type bluetooth server \"%s\" device \"nonsense\" }\n"
+	    "pcm.bt_device { type bluetooth server \"%s\" device "
+	    "\"06:05:04:03:02:01\" }\n"
+	    "pcm.bt_capture { type bluetooth capture_server "
+	    "\"%s/capture.sock\" }\n",
+	    plugin, socket_path, socket_path, socket_path, dir);
 	fclose(f);
 
 	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sig) == 0);
@@ -330,14 +352,16 @@ int main(int argc, char **argv)
 	sink_media = media[1];
 	bgpd_audio_init(&audio);
 	audio.avdtp.open_channel = open_channel;
-	CHECK(bgpd_audio_listen(&audio, socket_path) == 0);
+	bgpd_streams_init(&streams);
+	CHECK(bgpd_streams_listen(&streams, BGPD_STREAM_PLAYBACK,
+				  socket_path) == 0);
 	CHECK(sbc_init(&decoder, 0) == 0);
 	decoder.endian = SBC_LE;
 
 	/* No device is ready: the PCM cannot be opened. */
 	child = fork();
 	if (child == 0)
-		_exit(play(config, 100));
+		_exit(play(config, "bt_test", 100));
 	CHECK(wait_child(child, &code, &decoder, &frames, &crossings, &peak));
 	CHECK(code == 10);
 
@@ -353,7 +377,7 @@ int main(int argc, char **argv)
 	/* An application plays 300 ms through the plugin. */
 	child = fork();
 	if (child == 0)
-		_exit(play(config, 300));
+		_exit(play(config, "bt_test", 300));
 	CHECK(wait_child(child, &code, &decoder, &frames, &crossings, &peak));
 	CHECK(code == 0);
 	/* 300 ms are 103 frames of 128 samples. */
@@ -361,6 +385,26 @@ int main(int argc, char **argv)
 	/* 1 kHz crosses zero 2000 times a second: 600 in 300 ms. */
 	CHECK(crossings > 560 && crossings < 640);
 	CHECK(peak > 7000 && peak < 9000);
+	/* Without a device in the definition, the client asks for any. */
+	CHECK(greeted && last_request.any &&
+	      last_request.kind == BGPD_STREAM_PLAYBACK);
+
+	/* With a device, it names the headset. */
+	greeted = false;
+	child = fork();
+	if (child == 0)
+		_exit(play(config, "bt_device", 100));
+	CHECK(wait_child(child, &code, &decoder, &frames, &crossings, &peak));
+	CHECK(code == 0);
+	CHECK(greeted && !last_request.any);
+	CHECK(memcmp(last_request.addr, headset, BGPD_ADDR_SIZE) == 0);
+
+	/* A device that is not an address cannot be opened. */
+	child = fork();
+	if (child == 0)
+		_exit(play(config, "bt_bad", 100));
+	CHECK(wait_child(child, &code, &decoder, &frames, &crossings, &peak));
+	CHECK(code == 10);
 
 	{
 		char capture_path[100];
@@ -371,7 +415,8 @@ int main(int argc, char **argv)
 	}
 
 	sbc_finish(&decoder);
-	bgpd_audio_shutdown(&audio);
+	bgpd_audio_close(&audio);
+	bgpd_streams_shutdown(&streams);
 	close(sink_sig);
 	close(sink_media);
 	remove(config);

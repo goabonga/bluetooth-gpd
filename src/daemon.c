@@ -16,8 +16,11 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 	daemon->log = log;
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_init(&daemon->slots[i].hog);
-	bgpd_audio_init(&daemon->audio);
-	bgpd_voice_init(&daemon->voice);
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++) {
+		bgpd_audio_init(&daemon->audios[i].audio);
+		bgpd_voice_init(&daemon->audios[i].voice);
+	}
+	bgpd_streams_init(&daemon->streams);
 	daemon->ipc.listener = -1;
 	for (size_t i = 0; i < BGPD_IPC_MAX_CLIENTS; i++)
 		daemon->ipc.peers[i].fd = -1;
@@ -26,6 +29,59 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
 int bgpd_daemon_listen(struct bgpd_daemon *daemon, const char *path)
 {
 	return bgpd_ipc_listen(&daemon->ipc, path);
+}
+
+int bgpd_daemon_listen_streams(struct bgpd_daemon *daemon,
+			       const char *audio_path, const char *capture_path)
+{
+	if (bgpd_streams_listen(&daemon->streams, BGPD_STREAM_PLAYBACK,
+				audio_path) < 0)
+		return -1;
+	return bgpd_streams_listen(&daemon->streams, BGPD_STREAM_CAPTURE,
+				   capture_path);
+}
+
+/* ---- the audio devices ---- */
+
+static struct bgpd_daemon_audio *find_audio(struct bgpd_daemon *daemon,
+					    const uint8_t addr[BGPD_ADDR_SIZE])
+{
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++) {
+		struct bgpd_daemon_audio *a = &daemon->audios[i];
+
+		if (a->used &&
+		    memcmp(a->audio.avdtp.addr, addr, BGPD_ADDR_SIZE) == 0)
+			return a;
+	}
+	return NULL;
+}
+
+/* Connects an audio device, in a free slot; NULL if it cannot. */
+static struct bgpd_daemon_audio *open_audio(struct bgpd_daemon *daemon,
+					    const struct bgpd_device *d)
+{
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++) {
+		struct bgpd_daemon_audio *a = &daemon->audios[i];
+
+		if (a->used)
+			continue;
+		if (bgpd_audio_connect(&a->audio, d->addr, d->name) < 0)
+			return NULL;
+		a->used = true;
+		bgpd_voice_target(&a->voice, d->addr, d->name);
+		daemon->last_audio = i;
+		return a;
+	}
+	snprintf(daemon->mgmt->status, sizeof(daemon->mgmt->status),
+		 "Too many audio devices");
+	return NULL;
+}
+
+static void close_audio(struct bgpd_daemon_audio *a)
+{
+	bgpd_voice_shutdown(&a->voice);
+	bgpd_audio_close(&a->audio);
+	a->used = false;
 }
 
 static struct bgpd_daemon_slot *find_slot(struct bgpd_daemon *daemon,
@@ -96,11 +152,11 @@ static void connect_command(struct bgpd_daemon *daemon,
 		return;
 	}
 	if (d->addr[6] == BGPD_ADDR_BREDR) {
-		if (bgpd_audio_active(&daemon->audio))
+		if (find_audio(daemon, d->addr) != NULL)
 			snprintf(m->status, sizeof(m->status),
-				 "An audio device is already in use");
+				 "%s is already connected", d->name);
 		else
-			bgpd_audio_connect(&daemon->audio, d->addr, d->name);
+			open_audio(daemon, d);
 		return;
 	}
 	s = find_slot(daemon, d->addr);
@@ -115,9 +171,12 @@ static void disconnect_command(struct bgpd_daemon *daemon,
 {
 	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
 
-	if (d->addr[6] == BGPD_ADDR_BREDR &&
-	    memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0)
-		bgpd_audio_close(&daemon->audio);
+	if (d->addr[6] == BGPD_ADDR_BREDR) {
+		struct bgpd_daemon_audio *a = find_audio(daemon, d->addr);
+
+		if (a != NULL)
+			close_audio(a);
+	}
 
 	if (s != NULL) {
 		s->held = true;
@@ -129,24 +188,18 @@ static void disconnect_command(struct bgpd_daemon *daemon,
 static void tone_command(struct bgpd_daemon *daemon,
 			 const struct bgpd_device *d)
 {
-	struct bgpd_mgmt *m = daemon->mgmt;
-	bool same =
-	    bgpd_audio_active(&daemon->audio) &&
-	    memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0;
+	struct bgpd_daemon_audio *a;
 
 	if (d->addr[6] != BGPD_ADDR_BREDR || !d->paired) {
-		snprintf(m->status, sizeof(m->status),
+		snprintf(daemon->mgmt->status, sizeof(daemon->mgmt->status),
 			 "Pair a Classic audio device first");
 		return;
 	}
-	if (!same && bgpd_audio_active(&daemon->audio)) {
-		snprintf(m->status, sizeof(m->status),
-			 "An audio device is already in use");
-		return;
-	}
-	if (!same && bgpd_audio_connect(&daemon->audio, d->addr, d->name) < 0)
-		return;
-	bgpd_audio_tone(&daemon->audio, TONE_MS);
+	a = find_audio(daemon, d->addr);
+	if (a == NULL)
+		a = open_audio(daemon, d);
+	if (a != NULL)
+		bgpd_audio_tone(&a->audio, TONE_MS);
 }
 
 static void unpair_command(struct bgpd_daemon *daemon,
@@ -154,8 +207,12 @@ static void unpair_command(struct bgpd_daemon *daemon,
 {
 	struct bgpd_daemon_slot *s = slot_of(daemon, d->addr);
 
-	if (memcmp(daemon->audio.avdtp.addr, d->addr, BGPD_ADDR_SIZE) == 0)
-		bgpd_audio_close(&daemon->audio);
+	if (d->addr[6] == BGPD_ADDR_BREDR) {
+		struct bgpd_daemon_audio *a = find_audio(daemon, d->addr);
+
+		if (a != NULL)
+			close_audio(a);
+	}
 
 	/* The slot is released once the kernel reports the device unpaired. */
 	if (s != NULL) {
@@ -214,13 +271,14 @@ static void handle(void *context, const struct bgpd_ipc_command *command)
 	case BGPD_IPC_TONE:
 		tone_command(daemon, d);
 		break;
-	case BGPD_IPC_VOLUME:
-		if (bgpd_audio_active(&daemon->audio) &&
-		    memcmp(daemon->audio.avdtp.addr, command->addr,
-			   BGPD_ADDR_SIZE) == 0)
-			bgpd_audio_set_volume(&daemon->audio,
+	case BGPD_IPC_VOLUME: {
+		struct bgpd_daemon_audio *a = find_audio(daemon, command->addr);
+
+		if (a != NULL)
+			bgpd_audio_set_volume(&a->audio,
 					      (unsigned int)command->value);
 		break;
+	}
 	}
 }
 
@@ -249,23 +307,61 @@ static void release_slots(struct bgpd_daemon *daemon)
 /* Copies the audio device in use where the interfaces get their state. */
 static void publish_audio(struct bgpd_daemon *daemon)
 {
-	const struct bgpd_audio *audio = &daemon->audio;
 	struct bgpd_mgmt *m = daemon->mgmt;
-	struct bgpd_audio_info *info = &m->audio[0];
 
-	m->audio_count = bgpd_audio_active(audio) ? 1 : 0;
-	if (m->audio_count == 0)
-		return;
-	info->active = true;
-	memcpy(info->addr, audio->avdtp.addr, BGPD_ADDR_SIZE);
-	snprintf(info->name, sizeof(info->name), "%s", audio->avdtp.name);
-	info->volume = (int)audio->volume;
-	if (audio->avdtp.state == BGPD_AVDTP_STREAMING)
-		info->state = BGPD_AUDIO_STREAMING;
-	else if (audio->avdtp.state >= BGPD_AVDTP_READY)
-		info->state = BGPD_AUDIO_READY;
-	else
-		info->state = BGPD_AUDIO_CONNECTING;
+	m->audio_count = 0;
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++) {
+		const struct bgpd_audio *audio = &daemon->audios[i].audio;
+		struct bgpd_audio_info *info;
+
+		if (!daemon->audios[i].used)
+			continue;
+		info = &m->audio[m->audio_count++];
+		info->active = true;
+		memcpy(info->addr, audio->avdtp.addr, BGPD_ADDR_SIZE);
+		snprintf(info->name, sizeof(info->name), "%s",
+			 audio->avdtp.name);
+		info->volume = (int)audio->volume;
+		if (audio->avdtp.state == BGPD_AVDTP_STREAMING)
+			info->state = BGPD_AUDIO_STREAMING;
+		else if (audio->avdtp.state >= BGPD_AVDTP_READY)
+			info->state = BGPD_AUDIO_READY;
+		else
+			info->state = BGPD_AUDIO_CONNECTING;
+	}
+}
+
+/* The device a client asked for; "any" is the one connected last. */
+static struct bgpd_daemon_audio *pick_audio(struct bgpd_daemon *daemon,
+					    const struct bgpd_stream_request *r)
+{
+	struct bgpd_daemon_audio *last = &daemon->audios[daemon->last_audio];
+
+	if (!r->any)
+		return find_audio(daemon, r->addr);
+	if (last->used)
+		return last;
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++)
+		if (daemon->audios[i].used)
+			return &daemon->audios[i];
+	return NULL;
+}
+
+/* Gives each client of the PCM sockets the device its greeting names. */
+static void route_streams(struct bgpd_daemon *daemon)
+{
+	struct bgpd_stream_request request;
+
+	while (bgpd_streams_next(&daemon->streams, &request)) {
+		struct bgpd_daemon_audio *a = pick_audio(daemon, &request);
+
+		if (a == NULL)
+			bgpd_stream_refuse(request.fd);
+		else if (request.kind == BGPD_STREAM_PLAYBACK)
+			bgpd_audio_attach(&a->audio, request.fd);
+		else
+			bgpd_voice_attach(&a->voice, request.fd);
+	}
 }
 
 void bgpd_daemon_poll(struct bgpd_daemon *daemon)
@@ -275,21 +371,25 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 
 	bgpd_mgmt_poll(m);
 	bgpd_ipc_serve(&daemon->ipc, m, handle, daemon);
-	bgpd_audio_poll(&daemon->audio);
-	/* A capture client gets the microphone of the audio device in use. */
-	if (bgpd_audio_active(&daemon->audio))
-		bgpd_voice_target(&daemon->voice, daemon->audio.avdtp.addr,
-				  daemon->audio.avdtp.name);
-	else
-		bgpd_voice_no_target(&daemon->voice);
-	bgpd_voice_poll(&daemon->voice);
-	publish_audio(daemon);
-	if (daemon->audio.changed) {
-		daemon->audio.changed = false;
-		snprintf(m->status, sizeof(m->status), "%s",
-			 daemon->audio.status);
-		log_line(daemon, daemon->audio.status);
+	route_streams(daemon);
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++) {
+		struct bgpd_daemon_audio *a = &daemon->audios[i];
+
+		if (!a->used)
+			continue;
+		bgpd_audio_poll(&a->audio);
+		bgpd_voice_poll(&a->voice);
+		if (a->audio.changed) {
+			a->audio.changed = false;
+			snprintf(m->status, sizeof(m->status), "%s",
+				 a->audio.status);
+			log_line(daemon, a->audio.status);
+		}
+		/* A device that could not connect, or left, frees its slot. */
+		if (!bgpd_audio_active(&a->audio))
+			close_audio(a);
 	}
+	publish_audio(daemon);
 	/* Someone must be there to answer the pairing requests of devices. */
 	m->incoming = bgpd_ipc_clients(&daemon->ipc) > 0;
 	if (!m->incoming && m->prompt_kind != BGPD_PROMPT_NONE)
@@ -321,8 +421,11 @@ void bgpd_daemon_poll(struct bgpd_daemon *daemon)
 
 bool bgpd_daemon_streaming(const struct bgpd_daemon *daemon)
 {
-	return bgpd_audio_streaming(&daemon->audio) ||
-	       bgpd_voice_streaming(&daemon->voice);
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++)
+		if (bgpd_audio_streaming(&daemon->audios[i].audio) ||
+		    bgpd_voice_streaming(&daemon->audios[i].voice))
+			return true;
+	return false;
 }
 
 size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
@@ -337,8 +440,9 @@ size_t bgpd_daemon_running(const struct bgpd_daemon *daemon)
 
 void bgpd_daemon_close(struct bgpd_daemon *daemon)
 {
-	bgpd_voice_shutdown(&daemon->voice);
-	bgpd_audio_shutdown(&daemon->audio);
+	for (size_t i = 0; i < BGPD_DAEMON_AUDIOS; i++)
+		close_audio(&daemon->audios[i]);
+	bgpd_streams_shutdown(&daemon->streams);
 	bgpd_ipc_server_close(&daemon->ipc);
 	for (size_t i = 0; i < BGPD_DAEMON_SLOTS; i++)
 		bgpd_hog_close(&daemon->slots[i].hog);

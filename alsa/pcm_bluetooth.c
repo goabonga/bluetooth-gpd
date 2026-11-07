@@ -8,6 +8,10 @@
  *   pcm.bluetooth { type bluetooth }                  # default sockets
  *   pcm.bluetooth { type bluetooth server "/path"     # another playback
  *                   capture_server "/path" }          # and capture socket
+ *   pcm.speaker { type bluetooth device "AA:BB:CC:DD:EE:FF" }
+ *
+ * Without a device, the one connected last is used; with several audio
+ * devices connected, "device" chooses the headset or speaker of the PCM.
  *
  * Playback sends stereo audio to the headset or speaker in use; capture
  * receives the mono microphone of the headset, which opening starts (it can
@@ -21,6 +25,7 @@
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -29,9 +34,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#define HELLO_PLAYBACK "BGPDPCM1"
-#define HELLO_CAPTURE "BGPDCAP1"
-#define HELLO_SIZE 8U
+#define HELLO_PLAYBACK "BGPDPCM2"
+#define HELLO_CAPTURE "BGPDCAP2"
+#define HELLO_SIZE 23U /* the kind, 14 digits for the device, a newline */
 #define PLAYBACK_ANSWER_MS 2000
 #define CAPTURE_ANSWER_MS 30000
 #define DRAIN_TIMEOUT_MS 3000
@@ -184,6 +189,38 @@ static const snd_pcm_ioplug_callback_t callbacks = {
     .close = bt_close,
 };
 
+/*
+ * The greeting for a device given as "AA:BB:CC:DD:EE:FF", or for none: the
+ * kind, the address as 14 hexadecimal digits (six bytes least significant
+ * first and the type 00 of a Classic device) and a newline.
+ */
+static int greeting(char *out, size_t size, const char *kind,
+		    const char *device)
+{
+	unsigned int b[6] = {0};
+
+	if (device != NULL) {
+		if (strlen(device) != 17)
+			return -EINVAL;
+		for (size_t i = 0; i < 6; i++) {
+			const char pair[3] = {device[3 * i], device[3 * i + 1],
+					      '\0'};
+			char *end;
+
+			if (i < 5 && device[3 * i + 2] != ':')
+				return -EINVAL;
+			b[i] = (unsigned int)strtoul(pair, &end, 16);
+			if (*end != '\0' || pair[0] == '+' || pair[0] == '-' ||
+			    pair[0] == ' ')
+				return -EINVAL;
+		}
+	}
+	return snprintf(out, size, "%s%02x%02x%02x%02x%02x%02x00\n", kind, b[5],
+			b[4], b[3], b[2], b[1], b[0]) == (int)HELLO_SIZE
+		   ? 0
+		   : -EINVAL;
+}
+
 /* Connects to the daemon and returns the rate of the stream, or -errno. */
 static int connect_daemon(bluetooth *bt, const char *path, const char *hello,
 			  int timeout_ms)
@@ -252,8 +289,8 @@ static int set_constraints(bluetooth *bt)
 SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 {
 	snd_config_iterator_t i, next;
-	const char *server = NULL, *capture_server = NULL;
-	char fallback[108];
+	const char *server = NULL, *capture_server = NULL, *device = NULL;
+	char fallback[108], hello[HELLO_SIZE + 1];
 	bluetooth *bt;
 	int err;
 
@@ -270,6 +307,13 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 		if (strcmp(id, "server") == 0) {
 			if (snd_config_get_string(n, &server) < 0) {
 				SNDERR("server must be a string");
+				return -EINVAL;
+			}
+			continue;
+		}
+		if (strcmp(id, "device") == 0) {
+			if (snd_config_get_string(n, &device) < 0) {
+				SNDERR("device must be a string");
 				return -EINVAL;
 			}
 			continue;
@@ -304,9 +348,16 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 	bt->sock = -1;
 	bt->capture = stream == SND_PCM_STREAM_CAPTURE;
 	bt->frame_bytes = bt->capture ? 2U : 4U;
-	err = connect_daemon(
-	    bt, server, bt->capture ? HELLO_CAPTURE : HELLO_PLAYBACK,
-	    bt->capture ? CAPTURE_ANSWER_MS : PLAYBACK_ANSWER_MS);
+	err = greeting(hello, sizeof(hello),
+		       bt->capture ? HELLO_CAPTURE : HELLO_PLAYBACK, device);
+	if (err < 0) {
+		SNDERR("device must be an address like AA:BB:CC:DD:EE:FF");
+		free(bt);
+		return err;
+	}
+	err = connect_daemon(bt, server, hello,
+			     bt->capture ? CAPTURE_ANSWER_MS
+					 : PLAYBACK_ANSWER_MS);
 	if (err < 0) {
 		SNDERR("No Bluetooth audio device ready (%s): %s", server,
 		       strerror(-err));

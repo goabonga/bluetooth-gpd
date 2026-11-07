@@ -151,31 +151,26 @@ int main(int argc, char **argv)
 		goto done;
 	}
 	if (audio_sock == NULL) {
-		if (bgpd_audio_default_path(audio_path, sizeof(audio_path)) <
-		    0) {
+		if (bgpd_streams_default_path(BGPD_STREAM_PLAYBACK, audio_path,
+					      sizeof(audio_path)) < 0) {
 			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
 			status = 1;
 			goto done;
 		}
 		audio_sock = audio_path;
 	}
-	if (bgpd_audio_listen(&daemon->audio, audio_sock) < 0) {
-		fprintf(stderr, "Socket %s: %s\n", audio_sock, strerror(errno));
-		status = 1;
-		goto done;
-	}
 	if (capture_sock == NULL) {
-		if (bgpd_voice_default_path(capture_path,
-					    sizeof(capture_path)) < 0) {
+		if (bgpd_streams_default_path(BGPD_STREAM_CAPTURE, capture_path,
+					      sizeof(capture_path)) < 0) {
 			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
 			status = 1;
 			goto done;
 		}
 		capture_sock = capture_path;
 	}
-	if (bgpd_voice_listen(&daemon->voice, capture_sock) < 0) {
-		fprintf(stderr, "Socket %s: %s\n", capture_sock,
-			strerror(errno));
+	if (bgpd_daemon_listen_streams(daemon, audio_sock, capture_sock) < 0) {
+		fprintf(stderr, "Sockets %s and %s: %s\n", audio_sock,
+			capture_sock, strerror(errno));
 		status = 1;
 		goto done;
 	}

@@ -18,9 +18,11 @@
 #include "hog.h"
 #include "ipc.h"
 #include "mgmt.h"
+#include "streams.h"
 #include "voice.h"
 
 #define BGPD_DAEMON_SLOTS 8
+#define BGPD_DAEMON_AUDIOS BGPD_MAX_AUDIO
 #define BGPD_DAEMON_RETRY_MS 5000
 
 struct bgpd_daemon_slot {
@@ -31,13 +33,21 @@ struct bgpd_daemon_slot {
 	struct bgpd_hog hog;
 };
 
+/* A Classic audio device in use: its stream and its microphone. */
+struct bgpd_daemon_audio {
+	bool used;
+	struct bgpd_audio audio;
+	struct bgpd_voice voice;
+};
+
 struct bgpd_daemon {
 	struct bgpd_mgmt *mgmt;
 	FILE *log;		       /* messages, or NULL */
 	char logged[BGPD_STATUS_SIZE]; /* the last message written to log */
 	struct bgpd_daemon_slot slots[BGPD_DAEMON_SLOTS];
-	struct bgpd_audio audio; /* the Classic audio device in use */
-	struct bgpd_voice voice; /* its microphone, for capture clients */
+	struct bgpd_daemon_audio audios[BGPD_DAEMON_AUDIOS];
+	size_t last_audio; /* index of the audio device connected last */
+	struct bgpd_streams streams;
 	struct bgpd_ipc_server ipc;
 };
 
@@ -49,6 +59,14 @@ void bgpd_daemon_init(struct bgpd_daemon *daemon, struct bgpd_mgmt *mgmt,
  * and send commands (scan, pair, connect...) through bgpd_daemon_poll().
  */
 int bgpd_daemon_listen(struct bgpd_daemon *daemon, const char *path);
+
+/*
+ * Starts serving the PCM clients (see streams.h): playback and capture of
+ * the audio devices, each client being given the device its greeting names.
+ */
+int bgpd_daemon_listen_streams(struct bgpd_daemon *daemon,
+			       const char *audio_path,
+			       const char *capture_path);
 
 /*
  * Reads the management socket, serves the interfaces, then advances every
