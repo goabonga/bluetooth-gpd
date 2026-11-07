@@ -503,6 +503,7 @@ static void prepare(struct bgpd_mgmt *m)
 static void clear_prompt(struct bgpd_mgmt *m)
 {
 	m->prompt_kind = BGPD_PROMPT_NONE;
+	m->incoming_prompt = false;
 	m->prompt[0] = m->input[0] = '\0';
 }
 
@@ -945,10 +946,13 @@ static void on_auth_request(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
 {
 	const size_t sizes[] = {8, 12, 7}; /* PIN, confirmation, passkey */
 	char address[BGPD_ADDR_TEXT];
+	bool ours;
+	const char *prefix;
 
 	if (size != sizes[event - EV_PIN_REQUEST])
 		return;
-	if (!m->pairing || memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) != 0) {
+	ours = m->pairing && memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) == 0;
+	if (!ours && (!m->incoming || m->prompt_kind != BGPD_PROMPT_NONE)) {
 		/* Unsolicited requests are refused. */
 		uint16_t no = event == EV_PIN_REQUEST ? BGPD_OP_PIN_NEGATIVE
 			      : event == EV_USER_PASSKEY
@@ -958,23 +962,27 @@ static void on_auth_request(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
 		send_command(m, no, index, p, BGPD_ADDR_SIZE);
 		return;
 	}
+	prefix = ours ? "" : "Incoming pairing, ";
 	m->prompt_kind = event;
 	memcpy(m->prompt_addr, p, BGPD_ADDR_SIZE);
 	m->input[0] = '\0';
 	bgpd_address_format(p, address);
 	m->secure_pin = event == EV_PIN_REQUEST && p[7] != 0;
 	if (event == EV_USER_CONFIRM && p[7] != 0)
-		snprintf(m->prompt, sizeof(m->prompt), "Pair %s? [y/n]",
-			 address);
+		snprintf(m->prompt, sizeof(m->prompt), "%sPair %s? [y/n]",
+			 prefix, address);
 	else if (event == EV_USER_CONFIRM)
 		snprintf(m->prompt, sizeof(m->prompt),
-			 "%s: confirm %06u? [y/n]", address, bgpd_get32(p + 8));
+			 "%s%s: confirm %06u? [y/n]", prefix, address,
+			 bgpd_get32(p + 8));
 	else
 		snprintf(m->prompt, sizeof(m->prompt),
-			 "%s: %s; Enter accepts, Esc rejects", address,
+			 "%s%s: %s; Enter accepts, Esc rejects", prefix,
+			 address,
 			 event == EV_USER_PASSKEY ? "passkey: 1-6 digits"
 			 : m->secure_pin	  ? "PIN: 16 characters"
 						  : "PIN: 1-16 characters");
+	m->incoming_prompt = !ours;
 }
 
 void bgpd_mgmt_reply(struct bgpd_mgmt *m, bool accept)
@@ -1088,14 +1096,16 @@ static void on_event(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
 		on_auth_request(m, event, index, p, size);
 		break;
 	case EV_PASSKEY_NOTIFY:
-		if (size == 12 && m->pairing &&
-		    memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) == 0)
+		if (size == 12 && (m->pairing || m->incoming) &&
+		    memcmp(m->pairing ? m->pair_addr : m->prompt_addr, p,
+			   BGPD_ADDR_SIZE) == 0)
 			say(m, "Enter %06u on the device (%u digits entered)",
 			    bgpd_get32(p + 7), p[11]);
 		break;
 	case EV_AUTH_FAILED:
-		if (size == 8 && m->pairing &&
-		    memcmp(m->pair_addr, p, BGPD_ADDR_SIZE) == 0) {
+		if (size == 8 && (m->pairing || m->incoming) &&
+		    memcmp(m->pairing ? m->pair_addr : m->prompt_addr, p,
+			   BGPD_ADDR_SIZE) == 0) {
 			clear_prompt(m);
 			say(m, "Authentication: %s", error_name(p[7]));
 		}

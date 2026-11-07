@@ -280,6 +280,46 @@ static void test_pairing(void)
 	CHECK(bgpd_devices_get(&m->devices, other) != NULL);
 }
 
+static void test_incoming(void)
+{
+	uint8_t request[12] = {9, 9, 9, 9, 9, 9, 0, 0};
+	uint8_t failed[8] = {9, 9, 9, 9, 9, 9, 0, 5};
+
+	/* Refused unless the daemon has someone to ask. */
+	event(0x0f, m->index, request, sizeof(request));
+	CHECK(expect(BGPD_OP_CONFIRM_NEGATIVE) == BGPD_ADDR_SIZE);
+	CHECK(m->prompt_kind == BGPD_PROMPT_NONE);
+
+	m->incoming = true;
+	bgpd_put32(request + 8, 654321);
+	event(0x0f, m->index, request, sizeof(request));
+	CHECK(m->prompt_kind == BGPD_PROMPT_CONFIRM && m->incoming_prompt);
+	CHECK(strncmp(m->prompt, "Incoming pairing", 16) == 0);
+	CHECK(strstr(m->prompt, "654321") != NULL);
+
+	/* One prompt at a time. */
+	request[0] = 8;
+	event(0x0f, m->index, request, sizeof(request));
+	CHECK(expect(BGPD_OP_CONFIRM_NEGATIVE) == BGPD_ADDR_SIZE);
+	CHECK(m->prompt_addr[0] == 9);
+
+	bgpd_mgmt_reply(m, true);
+	CHECK(expect(BGPD_OP_CONFIRM) == BGPD_ADDR_SIZE && packet[6] == 9);
+	CHECK(m->prompt_kind == BGPD_PROMPT_NONE && !m->incoming_prompt);
+
+	/* The failure of the pairing is reported. */
+	event(0x11, m->index, failed, sizeof(failed));
+	CHECK(strncmp(m->status, "Authentication:", 15) == 0);
+
+	/* A passkey request of a device can be answered too. */
+	request[0] = 9;
+	event(0x10, m->index, request, 7);
+	CHECK(m->prompt_kind == BGPD_PROMPT_PASSKEY && m->incoming_prompt);
+	bgpd_mgmt_reply(m, false);
+	CHECK(expect(BGPD_OP_PASSKEY_NEGATIVE) == BGPD_ADDR_SIZE);
+	m->incoming = false;
+}
+
 static void test_cancel_and_failure(void)
 {
 	struct bgpd_device *d = bgpd_devices_get(&m->devices, remote);
@@ -428,6 +468,7 @@ int main(void)
 	test_discoverable();
 	test_keys();
 	test_pairing();
+	test_incoming();
 	test_cancel_and_failure();
 	test_unpair_and_disconnect();
 	test_pair_while_scanning();

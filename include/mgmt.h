@@ -76,6 +76,8 @@ struct bgpd_mgmt {
 	uint8_t pair_addr[BGPD_ADDR_SIZE], pair_original[BGPD_ADDR_SIZE];
 	uint8_t prompt_addr[BGPD_ADDR_SIZE], unpair_addr[BGPD_ADDR_SIZE];
 	bool ready, scanning, own_scan, pairing, secure_pin, storage_error;
+	bool incoming;	      /* requests of other devices open a prompt */
+	bool incoming_prompt; /* the open prompt is one of them */
 	uint64_t deadline;
 	char controller_name[BGPD_NAME_SIZE];
 	char controller_address[BGPD_ADDR_TEXT];
@@ -150,7 +152,8 @@ void bgpd_mgmt_toggle_power(struct bgpd_mgmt *m);
 /*
  * Pairs with a device. The kernel then asks for a PIN, a passkey or a
  * confirmation: prompt_kind, prompt and input describe the open prompt and
- * bgpd_mgmt_reply() answers it. Unsolicited requests are refused.
+ * bgpd_mgmt_reply() answers it. Unsolicited requests are refused, unless
+ * m->incoming is set: the user is then asked, like for a pairing started here.
  */
 void bgpd_mgmt_pair(struct bgpd_mgmt *m, const struct bgpd_device *device);
 
