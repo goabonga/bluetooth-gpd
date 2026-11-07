@@ -12,7 +12,9 @@ its terms.
 ## Development setup
 
 You need a C11 compiler (gcc or clang), `make`, `pkg-config`, ncursesw,
-[ctui](https://github.com/goabonga/ctui), `clang-format` and `clang-tidy`.
+[ctui](https://github.com/goabonga/ctui) (installed, or checked out next to
+this repository in `../ctui`; `make CTUI_DIR=path` always uses that checkout),
+`clang-format` and `clang-tidy`.
 
 ```bash
 git clone https://github.com/goabonga/bluetooth-gpd.git

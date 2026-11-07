@@ -9,7 +9,10 @@ Terminal Bluetooth manager for Linux, built on ctui.
 ## Build
 
 Requires a C11 compiler, GNU make, pkg-config, ncursesw and the
-[ctui](https://github.com/goabonga/ctui) library (`make install` there).
+[ctui](https://github.com/goabonga/ctui) library, found through `ctui.pc`
+when installed, else in `../ctui`. `CTUI_DIR=path` always uses that checkout
+instead, even when ctui is installed, to develop against a local ctui; it is
+built on demand.
 
 ```bash
 make

@@ -6,8 +6,28 @@ CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
 PKG_CONFIG ?= pkg-config
-CTUI_CFLAGS := $(shell $(PKG_CONFIG) --cflags ctui ncursesw)
-CTUI_LIBS   := $(shell $(PKG_CONFIG) --libs ctui ncursesw)
+NCURSES_CFLAGS := $(shell $(PKG_CONFIG) --cflags ncursesw)
+NCURSES_LIBS   := $(shell $(PKG_CONFIG) --libs ncursesw)
+
+# ctui provides the interface components. CTUI_DIR=path (command line or
+# environment) selects that checkout, built on demand, to develop against a
+# local ctui; otherwise an installed ctui.pc is used, else the sibling
+# checkout ../ctui.
+CTUI_DIR ?= ../ctui
+ifneq ($(origin CTUI_DIR),file)
+CTUI_LOCAL := yes
+else ifneq ($(shell $(PKG_CONFIG) --exists ctui && echo yes),yes)
+CTUI_LOCAL := yes
+endif
+ifdef CTUI_LOCAL
+CTUI_CFLAGS := -I$(CTUI_DIR)/include $(NCURSES_CFLAGS)
+CTUI_LIBS   := $(CTUI_DIR)/build/libctui.a -lm $(NCURSES_LIBS)
+CTUI_DEP    := $(CTUI_DIR)/build/libctui.a
+else
+CTUI_CFLAGS := $(shell $(PKG_CONFIG) --cflags ctui) $(NCURSES_CFLAGS)
+CTUI_LIBS   := $(shell $(PKG_CONFIG) --libs ctui) $(NCURSES_LIBS)
+CTUI_DEP    :=
+endif
 SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c include/*.h tests/*.c)
 BUILD   := build
@@ -26,7 +46,7 @@ help: ## List the make targets
 
 all: $(BUILD)/bluetooth ## Build everything
 
-$(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB_OBJ)
+$(BUILD)/bluetooth: $(BUILD)/main.o $(BUILD)/ui.o $(LIB_OBJ) $(CTUI_DEP)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(CTUI_LIBS)
 
 $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
@@ -34,6 +54,9 @@ $(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 
 $(BUILD):
 	mkdir -p $@
+
+$(CTUI_DIR)/build/libctui.a:
+	$(MAKE) -C $(CTUI_DIR) build/libctui.a
 
 # Unit tests, built with the address and undefined behaviour sanitizers.
 # -fno-pie -no-pie: on linux-hardened a PIE lands inside the ASan shadow
@@ -52,7 +75,7 @@ format: ## Format the sources with clang-format
 format-check: ## Fail when a source is not formatted
 	clang-format --dry-run -Werror $(SOURCES)
 
-lint: ## Run clang-tidy on the sources
+lint: $(CTUI_DEP) ## Run clang-tidy on the sources
 	clang-tidy --quiet $(filter %.c,$(SOURCES)) -- -std=c11 -D_GNU_SOURCE -Iinclude $(CTUI_CFLAGS)
 
 install: all ## Install under PREFIX, honouring DESTDIR
