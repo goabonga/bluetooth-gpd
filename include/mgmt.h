@@ -13,6 +13,8 @@
 #ifndef BGPD_MGMT_H
 #define BGPD_MGMT_H
 
+#include <stdio.h>
+
 #include "device.h"
 #include "store.h"
 
@@ -77,6 +79,7 @@ struct bgpd_mgmt {
 	char prompt[BGPD_PROMPT_SIZE]; /* question of the open prompt */
 	char input[BGPD_INPUT_SIZE];   /* PIN or passkey being typed */
 	const char *state_dir;
+	FILE *trace; /* packet log, or NULL */
 	struct bgpd_devices devices;
 	struct bgpd_store store;
 };
@@ -93,6 +96,9 @@ uint64_t bgpd_now(void);
 /* Empties m; requested_index is the adapter to use or BGPD_NO_INDEX. */
 void bgpd_mgmt_init(struct bgpd_mgmt *m, uint16_t requested_index,
 		    const char *state_dir);
+
+/* Logs every packet to the file (mode 0600), without keys or PINs. */
+int bgpd_mgmt_trace(struct bgpd_mgmt *m, const char *path);
 
 /*
  * Drops every capability of the process and forbids new privileges. The

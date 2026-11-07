@@ -17,7 +17,7 @@
 
 #define USAGE                                                                  \
 	"Usage: bluetooth [--demo] [--ascii] [--adapter hci0] "                \
-	"[--state-dir DIR]\n"                                                  \
+	"[--state-dir DIR] [--trace FILE]\n"                                   \
 	"Scans and pairs Bluetooth devices through the Linux kernel; no "      \
 	"BlueZ service.\n"
 
@@ -70,7 +70,7 @@ int main(int argc, char **argv)
 	struct bgpd_ui *ui = calloc(1, sizeof(*ui));
 	char state_dir[4096];
 	uint16_t adapter = BGPD_NO_INDEX;
-	const char *dir = NULL;
+	const char *dir = NULL, *trace = NULL;
 	bool demo = false;
 	int status = 0;
 
@@ -92,6 +92,8 @@ int main(int argc, char **argv)
 			demo = true;
 		} else if (strcmp(argv[i], "--ascii") == 0) {
 			setenv("CTUI_ASCII", "1", 1);
+		} else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
+			trace = argv[++i];
 		} else if (strcmp(argv[i], "--state-dir") == 0 &&
 			   i + 1 < argc) {
 			dir = argv[++i];
@@ -129,6 +131,10 @@ int main(int argc, char **argv)
 			goto done;
 		}
 		bgpd_ui_demo(m);
+	} else if (trace != NULL && bgpd_mgmt_trace(m, trace) < 0) {
+		fprintf(stderr, "Trace file %s: %s\n", trace, strerror(errno));
+		status = 1;
+		goto done;
 	} else if (bgpd_mgmt_open(m) < 0) {
 		fprintf(stderr, "%s\n", m->status);
 		status = 1;

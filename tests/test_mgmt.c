@@ -272,6 +272,24 @@ static void test_unpair_and_disconnect(void)
 	CHECK(!d->paired && !d->saved && m->store.count == 0);
 }
 
+static void test_trace(const char *dir)
+{
+	char path[300], text[8192] = {0};
+	FILE *f;
+
+	snprintf(path, sizeof(path), "%s/trace.log", dir);
+	f = fopen(path, "r");
+	CHECK(f != NULL);
+	if (f == NULL)
+		return;
+	CHECK(fread(text, 1, sizeof(text) - 1, f) > 0);
+	fclose(f);
+	CHECK(strstr(text, "> 0x0003 hci65535 (0 bytes)") != NULL);
+	CHECK(strstr(text, "< 0x0001") != NULL);
+	CHECK(strstr(text, "<hidden>") != NULL); /* keys are not logged */
+	unlink(path);
+}
+
 static void test_failures(void)
 {
 	uint8_t other[2] = {0, 0};
@@ -299,6 +317,8 @@ int main(void)
 		return 1;
 	bgpd_mgmt_init(m, BGPD_NO_INDEX, dir);
 	m->fd = fds[0];
+	snprintf(file, sizeof(file), "%s/trace.log", dir);
+	CHECK(bgpd_mgmt_trace(m, file) == 0);
 	peer = fds[1];
 	init(true);
 	test_scan();
@@ -309,6 +329,7 @@ int main(void)
 	test_unpair_and_disconnect();
 	test_failures();
 	bgpd_mgmt_close(m);
+	test_trace(dir);
 	close(peer);
 	snprintf(file, sizeof(file), "%s/010203040506.keys", dir);
 	unlink(file);

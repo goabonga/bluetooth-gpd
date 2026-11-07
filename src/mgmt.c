@@ -4,6 +4,7 @@
 #include "mgmt.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/capability.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -145,6 +146,42 @@ static const char *error_name(uint8_t code)
 						       : "Kernel error";
 }
 
+static bool secret_command(uint16_t op)
+{
+	return op == BGPD_OP_LOAD_LINK_KEYS || op == BGPD_OP_LOAD_LTKS ||
+	       op == BGPD_OP_LOAD_IRKS || op == BGPD_OP_PIN_REPLY ||
+	       op == BGPD_OP_PASSKEY;
+}
+
+/* Logs one packet; keys, PINs and passkeys are not written. */
+static void trace(const struct bgpd_mgmt *m, const char *direction,
+		  uint16_t code, uint16_t index, const uint8_t *data,
+		  size_t size, bool secret)
+{
+	if (m->trace == NULL)
+		return;
+	fprintf(m->trace, "%s 0x%04x hci%u (%zu bytes)", direction, code, index,
+		size);
+	for (size_t i = 0; i < size && !secret; i++)
+		fprintf(m->trace, " %02x", data[i]);
+	fputs(secret ? " <hidden>\n" : "\n", m->trace);
+	fflush(m->trace);
+}
+
+int bgpd_mgmt_trace(struct bgpd_mgmt *m, const char *path)
+{
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+
+	if (fd < 0)
+		return -1;
+	m->trace = fdopen(fd, "w");
+	if (m->trace == NULL) {
+		close(fd);
+		return -1;
+	}
+	return 0;
+}
+
 static int send_command(struct bgpd_mgmt *m, uint16_t op, uint16_t index,
 			const void *data, size_t size)
 {
@@ -160,6 +197,7 @@ static int send_command(struct bgpd_mgmt *m, uint16_t op, uint16_t index,
 	bgpd_put16(packet + 4, (uint16_t)size);
 	if (size > 0)
 		memcpy(packet + HEADER_SIZE, data, size);
+	trace(m, ">", op, index, data, size, secret_command(op));
 	do {
 		written = write(m->fd, packet, size + HEADER_SIZE);
 	} while (written < 0 && errno == EINTR);
@@ -969,6 +1007,9 @@ void bgpd_mgmt_packet(struct bgpd_mgmt *m, const uint8_t *packet, size_t size)
 	event = bgpd_get16(packet);
 	index = bgpd_get16(packet + 2);
 	size -= HEADER_SIZE;
+	trace(m, "<", event, index, p, size,
+	      event == EV_NEW_LINK_KEY || event == EV_NEW_LTK ||
+		  event == EV_NEW_IRK);
 	if (event == EV_COMMAND_COMPLETE || event == EV_COMMAND_STATUS) {
 		uint16_t op;
 
@@ -1028,4 +1069,7 @@ void bgpd_mgmt_close(struct bgpd_mgmt *m)
 	}
 	m->fd = -1;
 	bgpd_store_close(&m->store);
+	if (m->trace != NULL)
+		fclose(m->trace);
+	m->trace = NULL;
 }
