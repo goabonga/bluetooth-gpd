@@ -144,6 +144,8 @@ int main(void)
 	CHECK(c != NULL && c->kind == BGPD_IPC_POWER);
 	c = press(ui, 'a');
 	CHECK(c != NULL && c->kind == BGPD_IPC_ADAPTER);
+	c = press(ui, 'v');
+	CHECK(c != NULL && c->kind == BGPD_IPC_VISIBLE);
 
 	/* The first row is the keyboard. */
 	c = press(ui, 'p');

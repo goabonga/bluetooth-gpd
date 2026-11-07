@@ -22,8 +22,8 @@ static const ctui_table_column columns[COLS_] = {
 };
 
 static const char *const hints =
-    "s scan  p pair  c connect  d disconnect  x forget  o power  a adapter  "
-    "Tab filter  Esc cancel  q quit";
+    "s scan  v visible  p pair  c connect  d disconnect  x forget  o power  "
+    "a adapter  Tab filter  Esc cancel  q quit";
 
 static void say(struct bgpd_mgmt *m, const char *text)
 {
@@ -239,10 +239,12 @@ void bgpd_ui_draw(struct bgpd_ui *ui)
 	}
 	refresh_rows(ui);
 	draw_bars(ui);
-	snprintf(line, sizeof(line), "hci%u  %.24s  |  Power %s  |  Scan %s",
+	snprintf(line, sizeof(line),
+		 "hci%u  %.24s  |  Power %s  |  Scan %s  |  Visible %s",
 		 m->index, m->controller_name,
 		 (m->settings & 1U) != 0 ? "on" : "off",
-		 m->scanning ? "active" : "stopped");
+		 m->scanning ? "active" : "stopped",
+		 (m->settings & BGPD_SETTING_DISCOVERABLE) != 0 ? "yes" : "no");
 	ctui_put(2, 2, COLS - 4, line, ctui_attr(CTUI_PAIR_HEADING, true));
 	if (ui->visible == 0)
 		ctui_put(5, 2, COLS - 4,
@@ -289,6 +291,16 @@ static void scan(struct bgpd_ui *ui)
 		say(m, "Turn the adapter on first");
 	else
 		m->scanning = !m->scanning;
+}
+
+static void visible(struct bgpd_ui *ui)
+{
+	struct bgpd_mgmt *m = ui->mgmt;
+
+	if (ui->client != NULL)
+		send_command(ui, BGPD_IPC_VISIBLE, NULL);
+	else
+		m->settings ^= BGPD_SETTING_DISCOVERABLE;
 }
 
 static void pair(struct bgpd_ui *ui, struct bgpd_device *d)
@@ -388,6 +400,8 @@ bool bgpd_ui_key(struct bgpd_ui *ui, int key)
 		toggle_power(ui);
 	else if (key == 's' && m->ready)
 		scan(ui);
+	else if (key == 'v' && m->ready)
+		visible(ui);
 	if (!m->ready || ui->visible == 0)
 		return true;
 	ctui_table_key(&ui->table, key, LINES - 8);

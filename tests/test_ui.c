@@ -133,6 +133,8 @@ static void test_demo(const char *program)
 	CHECK(seen("DEMO: no hardware access"));
 	type("s");
 	CHECK(seen("active"));
+	type("v");
+	CHECK(seen("yes"));
 	type("j");
 	type("p");
 	CHECK(seen("simulated pairing"));
