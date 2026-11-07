@@ -5,17 +5,21 @@
  * ALSA PCM plugin "bluetooth": plays through bluetooth-daemon, which
  * encodes the audio to SBC and sends it to the headset or speaker in use.
  *
- *   pcm.bluetooth { type bluetooth }                  # default socket
- *   pcm.bluetooth { type bluetooth server "/path" }   # another socket
+ *   pcm.bluetooth { type bluetooth }                  # default sockets
+ *   pcm.bluetooth { type bluetooth server "/path"     # another playback
+ *                   capture_server "/path" }          # and capture socket
  *
- * The PCM refuses to open (ENODEV) when no audio device is connected. Its
- * sample rate is the one negotiated with the device; put a plug PCM in
- * front of it to play at any rate.
+ * Playback sends stereo audio to the headset or speaker in use; capture
+ * receives the mono microphone of the headset, which opening starts (it can
+ * take several seconds). Opening fails (ENODEV) when no audio device is
+ * connected. The sample rate is the one negotiated with the device (the
+ * microphone is 8 or 16 kHz); put a plug PCM in front to use any rate.
  */
 #include <alsa/asoundlib.h>
 #include <alsa/pcm_external.h>
 #include <errno.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,18 +29,22 @@
 #include <time.h>
 #include <unistd.h>
 
-#define HELLO "BGPDPCM1"
+#define HELLO_PLAYBACK "BGPDPCM1"
+#define HELLO_CAPTURE "BGPDCAP1"
 #define HELLO_SIZE 8U
-#define FRAME_BYTES 4U /* S16_LE, two channels */
-#define ANSWER_TIMEOUT_MS 2000
+#define PLAYBACK_ANSWER_MS 2000
+#define CAPTURE_ANSWER_MS 30000
 #define DRAIN_TIMEOUT_MS 3000
 #define SIOCOUTQ_REQUEST 0x5411UL
+#define FIONREAD_REQUEST 0x541BUL
 
 typedef struct {
 	snd_pcm_ioplug_t io;
 	int sock;
 	unsigned int rate;
-	uint64_t written; /* frames handed to the daemon */
+	bool capture;
+	unsigned int frame_bytes; /* S16_LE: 4 for stereo, 2 for the mono mic */
+	uint64_t written; /* frames handed to, or taken from, the daemon */
 } bluetooth;
 
 static void nap_ms(long ms)
@@ -53,7 +61,17 @@ static uint64_t queued(const bluetooth *bt)
 
 	if (ioctl(bt->sock, SIOCOUTQ_REQUEST, &bytes) < 0 || bytes < 0)
 		return 0;
-	return (uint64_t)bytes / FRAME_BYTES;
+	return (uint64_t)bytes / bt->frame_bytes;
+}
+
+/* Frames received from the daemon and not read yet. */
+static uint64_t available(const bluetooth *bt)
+{
+	int bytes = 0;
+
+	if (ioctl(bt->sock, FIONREAD_REQUEST, &bytes) < 0 || bytes < 0)
+		return 0;
+	return (uint64_t)bytes / bt->frame_bytes;
 }
 
 static int bt_start(snd_pcm_ioplug_t *io)
@@ -80,11 +98,20 @@ static int bt_prepare(snd_pcm_ioplug_t *io)
 static snd_pcm_sframes_t bt_pointer(snd_pcm_ioplug_t *io)
 {
 	bluetooth *bt = io->private_data;
-	uint64_t waiting = queued(bt);
-	uint64_t taken = bt->written > waiting ? bt->written - waiting : 0;
+	uint64_t waiting, taken;
 
 	if (io->state == SND_PCM_STATE_XRUN)
 		return -EPIPE;
+	if (bt->capture) {
+		uint64_t ready = available(bt);
+
+		if (ready > io->buffer_size)
+			ready = io->buffer_size;
+		return (snd_pcm_sframes_t)((bt->written + ready) %
+					   io->buffer_size);
+	}
+	waiting = queued(bt);
+	taken = bt->written > waiting ? bt->written - waiting : 0;
 	return (snd_pcm_sframes_t)(taken % io->buffer_size);
 }
 
@@ -95,17 +122,25 @@ static snd_pcm_sframes_t bt_transfer(snd_pcm_ioplug_t *io,
 				     snd_pcm_uframes_t size)
 {
 	bluetooth *bt = io->private_data;
-	const char *data = (const char *)areas->addr +
-			   (areas->first + (size_t)areas->step * offset) / 8U;
-	size_t left = (size_t)size * FRAME_BYTES;
+	char *data = (char *)areas->addr +
+		     (areas->first + (size_t)areas->step * offset) / 8U;
+	size_t left = (size_t)size * bt->frame_bytes;
 
 	while (left > 0) {
-		struct pollfd p = {.fd = bt->sock, .events = POLLOUT};
+		struct pollfd p = {.fd = bt->sock,
+				   .events = bt->capture ? POLLIN : POLLOUT};
 		ssize_t n;
 
 		if (poll(&p, 1, -1) < 0 && errno != EINTR)
 			return -errno;
-		n = send(bt->sock, data, left, MSG_NOSIGNAL | MSG_DONTWAIT);
+		if (bt->capture) {
+			n = recv(bt->sock, data, left, MSG_DONTWAIT);
+			if (n == 0)
+				return -ENODEV; /* the daemon closed the link */
+		} else {
+			n = send(bt->sock, data, left,
+				 MSG_NOSIGNAL | MSG_DONTWAIT);
+		}
 		if (n < 0 && (errno == EAGAIN || errno == EINTR))
 			continue;
 		if (n < 0)
@@ -121,6 +156,8 @@ static int bt_drain(snd_pcm_ioplug_t *io)
 {
 	bluetooth *bt = io->private_data;
 
+	if (bt->capture)
+		return 0;
 	for (int waited = 0; waited < DRAIN_TIMEOUT_MS && queued(bt) > 0;
 	     waited += 10)
 		nap_ms(10);
@@ -148,7 +185,8 @@ static const snd_pcm_ioplug_callback_t callbacks = {
 };
 
 /* Connects to the daemon and returns the rate of the stream, or -errno. */
-static int connect_daemon(bluetooth *bt, const char *path)
+static int connect_daemon(bluetooth *bt, const char *path, const char *hello,
+			  int timeout_ms)
 {
 	struct sockaddr_un address = {.sun_family = AF_UNIX};
 	struct pollfd p;
@@ -163,10 +201,10 @@ static int connect_daemon(bluetooth *bt, const char *path)
 		return -errno;
 	if (connect(bt->sock, (struct sockaddr *)&address, sizeof(address)) < 0)
 		return -errno;
-	if (write(bt->sock, HELLO, HELLO_SIZE) != (ssize_t)HELLO_SIZE)
+	if (write(bt->sock, hello, HELLO_SIZE) != (ssize_t)HELLO_SIZE)
 		return -errno;
 	p = (struct pollfd){.fd = bt->sock, .events = POLLIN};
-	if (poll(&p, 1, ANSWER_TIMEOUT_MS) != 1)
+	if (poll(&p, 1, timeout_ms) != 1)
 		return -ETIMEDOUT;
 	n = read(bt->sock, answer, sizeof(answer));
 	if (n != (ssize_t)sizeof(answer))
@@ -190,7 +228,8 @@ static int set_constraints(bluetooth *bt)
 		    &bt->io, SND_PCM_IOPLUG_HW_FORMAT, 1, format);
 	if (err >= 0)
 		err = snd_pcm_ioplug_set_param_minmax(
-		    &bt->io, SND_PCM_IOPLUG_HW_CHANNELS, 2, 2);
+		    &bt->io, SND_PCM_IOPLUG_HW_CHANNELS, bt->capture ? 1 : 2,
+		    bt->capture ? 1 : 2);
 	if (err >= 0)
 		err = snd_pcm_ioplug_set_param_minmax(
 		    &bt->io, SND_PCM_IOPLUG_HW_RATE, bt->rate, bt->rate);
@@ -213,7 +252,7 @@ static int set_constraints(bluetooth *bt)
 SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 {
 	snd_config_iterator_t i, next;
-	const char *server = NULL;
+	const char *server = NULL, *capture_server = NULL;
 	char fallback[108];
 	bluetooth *bt;
 	int err;
@@ -235,18 +274,27 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 			}
 			continue;
 		}
+		if (strcmp(id, "capture_server") == 0) {
+			if (snd_config_get_string(n, &capture_server) < 0) {
+				SNDERR("capture_server must be a string");
+				return -EINVAL;
+			}
+			continue;
+		}
 		SNDERR("Unknown field %s", id);
 		return -EINVAL;
 	}
-	if (stream != SND_PCM_STREAM_PLAYBACK)
-		return -EINVAL;
+	if (stream == SND_PCM_STREAM_CAPTURE)
+		server = capture_server;
 	if (server == NULL) {
 		const char *dir = getenv("XDG_RUNTIME_DIR");
 
 		if (dir == NULL || dir[0] != '/' ||
-		    snprintf(fallback, sizeof(fallback),
-			     "%s/bluetooth-audio.sock",
-			     dir) >= (int)sizeof(fallback))
+		    snprintf(fallback, sizeof(fallback), "%s/%s", dir,
+			     stream == SND_PCM_STREAM_CAPTURE
+				 ? "bluetooth-capture.sock"
+				 : "bluetooth-audio.sock") >=
+			(int)sizeof(fallback))
 			return -ENOENT;
 		server = fallback;
 	}
@@ -254,7 +302,11 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 	if (bt == NULL)
 		return -ENOMEM;
 	bt->sock = -1;
-	err = connect_daemon(bt, server);
+	bt->capture = stream == SND_PCM_STREAM_CAPTURE;
+	bt->frame_bytes = bt->capture ? 2U : 4U;
+	err = connect_daemon(
+	    bt, server, bt->capture ? HELLO_CAPTURE : HELLO_PLAYBACK,
+	    bt->capture ? CAPTURE_ANSWER_MS : PLAYBACK_ANSWER_MS);
 	if (err < 0) {
 		SNDERR("No Bluetooth audio device ready (%s): %s", server,
 		       strerror(-err));
@@ -268,7 +320,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 	bt->io.callback = &callbacks;
 	bt->io.private_data = bt;
 	bt->io.poll_fd = bt->sock;
-	bt->io.poll_events = POLLOUT;
+	bt->io.poll_events = bt->capture ? POLLIN : POLLOUT;
 	err = snd_pcm_ioplug_create(&bt->io, name, stream, mode);
 	if (err < 0) {
 		close(bt->sock);

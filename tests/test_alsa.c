@@ -14,10 +14,12 @@
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -177,6 +179,113 @@ static bool wait_child(pid_t child, int *code, sbc_t *decoder,
 	return false;
 }
 
+/* The program under test: reads 300 ms of the microphone. */
+static int record(const char *config)
+{
+	snd_pcm_t *pcm;
+	int16_t block[160];
+	unsigned int count = 0, crossings = 0;
+	int previous = 0;
+	int err;
+
+	setenv("ALSA_CONFIG_PATH", config, 1);
+	err = snd_pcm_open(&pcm, "bt_capture", SND_PCM_STREAM_CAPTURE, 0);
+	if (err < 0)
+		return 20;
+	err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE,
+				 SND_PCM_ACCESS_RW_INTERLEAVED, 1, 16000, 0,
+				 200000);
+	if (err < 0)
+		return 21;
+	while (count < 4800) {
+		snd_pcm_sframes_t n = snd_pcm_readi(pcm, block, 160);
+
+		if (n < 0)
+			n = snd_pcm_recover(pcm, (int)n, 1);
+		if (n <= 0)
+			return 22;
+		for (snd_pcm_sframes_t i = 0; i < n; i++) {
+			if (count > 0 && (block[i] < 0) != (previous < 0))
+				crossings++;
+			previous = block[i];
+			count++;
+		}
+	}
+	snd_pcm_close(pcm);
+	/* 1 kHz at 16 kHz crosses zero every 8 samples: 600 in 4800. */
+	return crossings > 560 && crossings < 640 ? 0 : 23;
+}
+
+/* The fake daemon side of the microphone: the rate, then a 1 kHz tone. */
+static void fake_microphone(int listener, unsigned int rate)
+{
+	struct pollfd p = {.fd = listener, .events = POLLIN};
+	uint8_t greeting[8], bytes[4];
+	int16_t samples[160];
+	int fd;
+
+	if (poll(&p, 1, 5000) != 1) {
+		CHECK(!"capture client expected");
+		return;
+	}
+	fd = accept(listener, NULL, NULL);
+	CHECK(fd >= 0);
+	if (fd < 0)
+		return;
+	CHECK(read(fd, greeting, sizeof(greeting)) == 8);
+	CHECK(memcmp(greeting, "BGPDCAP1", 8) == 0);
+	for (unsigned int i = 0; i < 4; i++)
+		bytes[i] = (uint8_t)(rate >> (8U * i));
+	CHECK(write(fd, bytes, 4) == 4);
+	for (unsigned int block = 0; rate != 0 && block < 60; block++) {
+		for (unsigned int i = 0; i < 160; i++)
+			samples[i] =
+			    (int16_t)(8000.0 *
+				      sin(2.0 * 3.14159265358979 * 1000.0 *
+					  (block * 160U + i) / 16000.0));
+		if (write(fd, samples, sizeof(samples)) !=
+		    (ssize_t)sizeof(samples))
+			break;
+		usleep(8000);
+	}
+	close(fd);
+}
+
+static void test_capture(const char *socket_path, const char *config)
+{
+	struct sockaddr_un address = {.sun_family = AF_UNIX};
+	int listener = socket(AF_UNIX, SOCK_STREAM, 0);
+	pid_t child;
+	int code = -1;
+
+	snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path);
+	unlink(socket_path);
+	if (listener < 0 ||
+	    bind(listener, (struct sockaddr *)&address, sizeof(address)) < 0 ||
+	    listen(listener, 2) < 0) {
+		CHECK(!"capture socket");
+		return;
+	}
+
+	/* The microphone of the headset, at 16 kHz. */
+	child = fork();
+	if (child == 0)
+		_exit(record(config));
+	fake_microphone(listener, 16000);
+	CHECK(waitpid(child, &code, 0) == child);
+	CHECK(WIFEXITED(code) && WEXITSTATUS(code) == 0);
+
+	/* The daemon refuses with the rate 0: the PCM cannot be opened. */
+	child = fork();
+	if (child == 0)
+		_exit(record(config));
+	fake_microphone(listener, 0);
+	CHECK(waitpid(child, &code, 0) == child);
+	CHECK(WIFEXITED(code) && WEXITSTATUS(code) == 20);
+	close(listener);
+	unlink(socket_path);
+}
+
 int main(int argc, char **argv)
 {
 	static const uint8_t endpoints[] = {0x08, 0x08};
@@ -191,6 +300,7 @@ int main(int argc, char **argv)
 	pid_t child;
 	FILE *f;
 
+	signal(SIGPIPE, SIG_IGN);
 	if (argc != 2 || mkdtemp(dir) == NULL ||
 	    realpath(argv[1], program) == NULL)
 		return 2;
@@ -205,8 +315,10 @@ int main(int argc, char **argv)
 	fprintf(f,
 		"</usr/share/alsa/alsa.conf>\n"
 		"pcm_type.bluetooth { lib \"%s\" }\n"
-		"pcm.bt_test { type bluetooth server \"%s\" }\n",
-		plugin, socket_path);
+		"pcm.bt_test { type bluetooth server \"%s\" }\n"
+		"pcm.bt_capture { type bluetooth capture_server "
+		"\"%s/capture.sock\" }\n",
+		plugin, socket_path, dir);
 	fclose(f);
 
 	CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sig) == 0);
@@ -249,6 +361,14 @@ int main(int argc, char **argv)
 	/* 1 kHz crosses zero 2000 times a second: 600 in 300 ms. */
 	CHECK(crossings > 560 && crossings < 640);
 	CHECK(peak > 7000 && peak < 9000);
+
+	{
+		char capture_path[100];
+
+		snprintf(capture_path, sizeof(capture_path), "%s/capture.sock",
+			 dir);
+		test_capture(capture_path, config);
+	}
 
 	sbc_finish(&decoder);
 	bgpd_audio_shutdown(&audio);
