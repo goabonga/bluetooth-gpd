@@ -22,8 +22,8 @@ static const ctui_table_column columns[COLS_] = {
 };
 
 static const char *const hints =
-    "s scan  v visible  p pair  c connect  d disconnect  x forget  o power  "
-    "a adapter  Tab filter  Esc cancel  q quit";
+    "s scan  v visible  p pair  c connect  t tone  d disconnect  x forget  "
+    "o power  a adapter  Tab filter  Esc cancel  q quit";
 
 static void say(struct bgpd_mgmt *m, const char *text)
 {
@@ -412,7 +412,12 @@ bool bgpd_ui_key(struct bgpd_ui *ui, int key)
 		pair(ui, d);
 	else if (key == 'c')
 		connect_device(ui, d);
-	else if (key == 'd')
+	else if (key == 't') {
+		if (ui->client != NULL)
+			send_command(ui, BGPD_IPC_TONE, d);
+		else
+			say(m, "DEMO: no audio");
+	} else if (key == 'd')
 		disconnect(ui, d);
 	else if (key == 'x') {
 		memcpy(ui->forget_addr, d->addr, BGPD_ADDR_SIZE);

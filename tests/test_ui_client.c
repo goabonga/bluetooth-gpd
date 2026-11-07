@@ -166,6 +166,9 @@ int main(void)
 	CHECK(press(ui, KEY_DOWN) == NULL);
 	c = press(ui, 'p');
 	CHECK(c != NULL && memcmp(c->addr, headset, BGPD_ADDR_SIZE) == 0);
+	c = press(ui, 't');
+	CHECK(c != NULL && c->kind == BGPD_IPC_TONE);
+	CHECK(c != NULL && memcmp(c->addr, headset, BGPD_ADDR_SIZE) == 0);
 
 	/* The PIN typed in the dialog goes to the daemon, once. */
 	open_prompt(ui, BGPD_PROMPT_PIN, "PIN for Keyboard?");
