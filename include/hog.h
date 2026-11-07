@@ -15,6 +15,8 @@
 #ifndef BGPD_HOG_H
 #define BGPD_HOG_H
 
+#include <stdio.h>
+
 #include "device.h"
 
 #define BGPD_HOG_MAX_CHARS 24
@@ -51,6 +53,8 @@ struct bgpd_hog {
 	uint64_t deadline;
 	char status[BGPD_HOG_STATUS_SIZE]; /* last message */
 	bool changed;			   /* status was updated */
+	FILE *trace;			   /* log of the steps, or NULL */
+	uint64_t trace_start;		   /* clock of the log's time zero */
 };
 
 void bgpd_hog_init(struct bgpd_hog *hog);

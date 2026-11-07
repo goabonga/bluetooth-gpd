@@ -100,6 +100,12 @@ static void say(struct bgpd_hog *hog, const char *format, ...)
 	vsnprintf(hog->status, sizeof(hog->status), format, args);
 	va_end(args);
 	hog->changed = true;
+	if (hog->trace != NULL) {
+		fprintf(hog->trace, "%8llu ms hog %s\n",
+			(unsigned long long)(now_ms() - hog->trace_start),
+			hog->status);
+		fflush(hog->trace);
+	}
 }
 
 void bgpd_hog_init(struct bgpd_hog *hog)
@@ -150,6 +156,12 @@ static int send_att(struct bgpd_hog *hog, const uint8_t *pdu, size_t size)
 		return -1;
 	}
 	hog->deadline = now_ms() + STEP_TIMEOUT_MS;
+	if (hog->trace != NULL) {
+		fprintf(hog->trace, "%8llu ms hog > att 0x%02x (%zu bytes)\n",
+			(unsigned long long)(now_ms() - hog->trace_start),
+			pdu[0], size);
+		fflush(hog->trace);
+	}
 	return 0;
 }
 
@@ -403,6 +415,12 @@ static void on_map(struct bgpd_hog *hog, uint8_t opcode, const uint8_t *p,
 
 static void on_pdu(struct bgpd_hog *hog, const uint8_t *pdu, size_t size)
 {
+	if (hog->trace != NULL) {
+		fprintf(hog->trace, "%8llu ms hog < att 0x%02x (%zu bytes)\n",
+			(unsigned long long)(now_ms() - hog->trace_start),
+			pdu[0], size);
+		fflush(hog->trace);
+	}
 	const uint8_t *p = pdu + 1;
 	size_t n = size - 1;
 
@@ -528,7 +546,7 @@ int bgpd_hog_connect(struct bgpd_hog *hog, const uint8_t addr[BGPD_ADDR_SIZE],
 	fd = socket(AF_BLUETOOTH_FAMILY,
 		    SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC,
 		    BTPROTO_L2CAP);
-	if (fd < 0 ||
+	if (fd < 0 || bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0 ||
 	    setsockopt(fd, SOL_BLUETOOTH_LEVEL, BT_SECURITY_OPTION, &security,
 		       sizeof(security)) < 0 ||
 	    (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 &&
