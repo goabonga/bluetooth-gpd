@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int failures;
@@ -310,6 +311,37 @@ static void test_trace(const char *dir)
 	unlink(path);
 }
 
+static void test_manager(const char *dir)
+{
+	char path[300];
+	FILE *f;
+
+	snprintf(path, sizeof(path), "%s/42", dir);
+	CHECK(mkdir(path, 0700) == 0);
+	snprintf(path, sizeof(path), "%s/42/comm", dir);
+	f = fopen(path, "w");
+	CHECK(f != NULL);
+	if (f == NULL)
+		return;
+	fputs("sshd\n", f);
+	fclose(f);
+	bgpd_mgmt_check_manager(m, dir);
+	CHECK(m->warning[0] == '\0');
+	f = fopen(path, "w");
+	CHECK(f != NULL);
+	if (f == NULL)
+		return;
+	fputs("bluetoothd\n", f);
+	fclose(f);
+	bgpd_mgmt_check_manager(m, dir);
+	CHECK(strstr(m->warning, "bluetoothd") != NULL);
+	bgpd_mgmt_check_manager(m, "/nonexistent");
+	CHECK(m->warning[0] == '\0');
+	unlink(path);
+	snprintf(path, sizeof(path), "%s/42", dir);
+	rmdir(path);
+}
+
 static void test_failures(void)
 {
 	uint8_t other[2] = {0, 0};
@@ -351,6 +383,7 @@ int main(void)
 	test_failures();
 	bgpd_mgmt_close(m);
 	test_trace(dir);
+	test_manager(dir);
 	close(peer);
 	snprintf(file, sizeof(file), "%s/010203040506.keys", dir);
 	unlink(file);

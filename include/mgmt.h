@@ -75,9 +75,10 @@ struct bgpd_mgmt {
 	uint64_t deadline;
 	char controller_name[BGPD_NAME_SIZE];
 	char controller_address[BGPD_ADDR_TEXT];
-	char status[BGPD_STATUS_SIZE]; /* last message, for the user */
-	char prompt[BGPD_PROMPT_SIZE]; /* question of the open prompt */
-	char input[BGPD_INPUT_SIZE];   /* PIN or passkey being typed */
+	char status[BGPD_STATUS_SIZE];	/* last message, for the user */
+	char prompt[BGPD_PROMPT_SIZE];	/* question of the open prompt */
+	char warning[BGPD_PROMPT_SIZE]; /* lasting problem, or empty */
+	char input[BGPD_INPUT_SIZE];	/* PIN or passkey being typed */
 	const char *state_dir;
 	FILE *trace;	      /* packet log, or NULL */
 	uint64_t trace_start; /* bgpd_now() when the log was opened */
@@ -97,6 +98,13 @@ uint64_t bgpd_now(void);
 /* Empties m; requested_index is the adapter to use or BGPD_NO_INDEX. */
 void bgpd_mgmt_init(struct bgpd_mgmt *m, uint16_t requested_index,
 		    const char *state_dir);
+
+/*
+ * Sets m->warning when another Bluetooth manager (bluetoothd) runs: it gets
+ * the same authentication requests and refuses them, so pairing fails at
+ * once. proc is the process directory, "/proc" outside the tests.
+ */
+void bgpd_mgmt_check_manager(struct bgpd_mgmt *m, const char *proc);
 
 /* Logs every packet to the file (mode 0600), without keys or PINs. */
 int bgpd_mgmt_trace(struct bgpd_mgmt *m, const char *path);

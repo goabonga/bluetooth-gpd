@@ -3,6 +3,8 @@
 
 #include "mgmt.h"
 
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/capability.h>
@@ -249,6 +251,39 @@ static bool has_net_admin(void)
 		return false;
 	return (data[CAP_NET_ADMIN / 32].effective &
 		(1U << (CAP_NET_ADMIN % 32U))) != 0;
+}
+
+void bgpd_mgmt_check_manager(struct bgpd_mgmt *m, const char *proc)
+{
+	DIR *dir = opendir(proc);
+	struct dirent *entry;
+
+	m->warning[0] = '\0';
+	if (dir == NULL)
+		return;
+	while ((entry = readdir(dir)) != NULL) {
+		char path[300], name[32] = {0};
+		FILE *f;
+
+		if (!isdigit((unsigned char)entry->d_name[0]))
+			continue;
+		snprintf(path, sizeof(path), "%s/%.200s/comm", proc,
+			 entry->d_name);
+		f = fopen(path, "r");
+		if (f == NULL)
+			continue;
+		if (fgets(name, sizeof(name), f) != NULL &&
+		    strncmp(name, "bluetoothd", 10) == 0) {
+			snprintf(
+			    m->warning, sizeof(m->warning),
+			    "bluetoothd is running and refuses pairing "
+			    "requests: stop it (systemctl stop bluetooth)");
+			fclose(f);
+			break;
+		}
+		fclose(f);
+	}
+	closedir(dir);
 }
 
 int bgpd_mgmt_open(struct bgpd_mgmt *m)
