@@ -3,6 +3,8 @@
 
 #include "audio.h"
 
+#include "streams.h"
+
 #include <errno.h>
 #include <math.h>
 #include <stdlib.h>
@@ -160,6 +162,19 @@ static void accept_client(struct bgpd_audio *audio)
 			close(fd);
 		}
 	}
+}
+
+int bgpd_audio_attach(struct bgpd_audio *audio, int fd)
+{
+	if (audio->client >= 0 || audio->avdtp.state < BGPD_AVDTP_READY ||
+	    audio->avdtp.sbc.rate == 0 ||
+	    !bgpd_stream_accept(fd, audio->avdtp.sbc.rate)) {
+		bgpd_stream_refuse(fd);
+		return -1;
+	}
+	audio->client = fd;
+	audio->hello_used = BGPD_AUDIO_HELLO_SIZE; /* the greeting was read */
+	return 0;
 }
 
 /* Reads the greeting, answers it, then takes the PCM into the ring. */
@@ -413,10 +428,9 @@ void bgpd_audio_poll(struct bgpd_audio *audio)
 		audio->changed = true;
 		a->changed = false;
 	}
-	if (audio->listener >= 0) {
+	if (audio->listener >= 0)
 		accept_client(audio);
-		read_client(audio);
-	}
+	read_client(audio);
 	/* The control channel gives the volume of the device, when it has one.
 	 */
 	if (!audio->avrcp_tried && a->state >= BGPD_AVDTP_READY) {

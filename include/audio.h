@@ -69,6 +69,14 @@ int bgpd_audio_default_path(char *buffer, size_t size);
  */
 void bgpd_audio_set_volume(struct bgpd_audio *audio, unsigned int percent);
 
+/*
+ * Gives the device a client whose greeting was read (see streams.h): it is
+ * told the rate of the stream and its PCM is then played. The client is
+ * refused (rate 0) and closed when the device is not ready for audio or
+ * already has a client. Returns -1 then.
+ */
+int bgpd_audio_attach(struct bgpd_audio *audio, int fd);
+
 /* Starts connecting to a paired Classic audio device. */
 int bgpd_audio_connect(struct bgpd_audio *audio,
 		       const uint8_t addr[BGPD_ADDR_SIZE], const char *name);
