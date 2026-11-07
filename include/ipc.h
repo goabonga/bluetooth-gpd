@@ -13,6 +13,7 @@
 #define BGPD_IPC_H
 
 #include <stddef.h>
+#include <sys/types.h>
 
 #include "mgmt.h"
 
@@ -57,5 +58,50 @@ size_t bgpd_ipc_format(const struct bgpd_ipc_command *command, char *out,
 
 /* Reads one line, without its newline. Returns -1 when it is not valid. */
 int bgpd_ipc_parse(const char *line, struct bgpd_ipc_command *command);
+
+#define BGPD_IPC_MAX_CLIENTS 4
+#define BGPD_IPC_LINE_MAX 128
+
+struct bgpd_ipc_peer {
+	int fd;
+	char line[BGPD_IPC_LINE_MAX]; /* start of the line being received */
+	size_t used;
+};
+
+struct bgpd_ipc_server {
+	int listener;
+	struct bgpd_ipc_peer peers[BGPD_IPC_MAX_CLIENTS];
+	char last[BGPD_IPC_SNAPSHOT_MAX]; /* snapshot sent last */
+	char work[BGPD_IPC_SNAPSHOT_MAX];
+	size_t last_size;
+	char path[108]; /* the socket file, removed on close */
+};
+
+typedef void (*bgpd_ipc_handler)(void *context,
+				 const struct bgpd_ipc_command *command);
+
+/* $XDG_RUNTIME_DIR/bluetooth.sock; -1 when there is no such directory. */
+int bgpd_ipc_default_path(char *buffer, size_t size);
+
+/*
+ * Starts listening on a Unix socket only its owner can use. A socket left
+ * by a stopped daemon is replaced; one that answers makes it fail with
+ * EADDRINUSE.
+ */
+int bgpd_ipc_listen(struct bgpd_ipc_server *server, const char *path);
+
+/*
+ * Accepts clients, passes their commands to handler and sends the snapshot
+ * of m to all of them when it changed. Nothing blocks: a client that cannot
+ * keep up is dropped and reconnects. Clients of another user are refused.
+ */
+void bgpd_ipc_serve(struct bgpd_ipc_server *server, const struct bgpd_mgmt *m,
+		    bgpd_ipc_handler handler, void *context);
+
+/* Number of connected clients. */
+size_t bgpd_ipc_clients(const struct bgpd_ipc_server *server);
+
+/* Disconnects the clients and removes the socket. */
+void bgpd_ipc_server_close(struct bgpd_ipc_server *server);
 
 #endif /* BGPD_IPC_H */
