@@ -38,7 +38,7 @@ LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a
 TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 
-.PHONY: help all test format format-check lint clean install
+.PHONY: help all test format format-check lint clean install install-capabilities
 
 .DEFAULT_GOAL := all
 
@@ -90,6 +90,13 @@ lint: $(CTUI_DEP) ## Run clang-tidy on the sources
 install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
 	install -Dm755 $(BUILD)/bluetooth-daemon $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
+	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
+	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/user/bluetooth-daemon.service
+
+# Lets the daemon open the management socket without running as root. It
+# drops the capability as soon as the socket is bound.
+install-capabilities: ## Grant the installed daemon CAP_NET_ADMIN
+	setcap cap_net_admin+ep $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
 
 clean: ## Remove the build directory
 	rm -rf $(BUILD)

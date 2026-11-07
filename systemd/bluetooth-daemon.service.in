@@ -1,0 +1,10 @@
+[Unit]
+Description=Keeps the paired Bluetooth LE devices connected
+
+[Service]
+ExecStart=@BINDIR@/bluetooth-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
