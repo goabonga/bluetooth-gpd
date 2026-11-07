@@ -135,6 +135,25 @@ static void test_scan(void)
 	CHECK(!m->scanning && !m->own_scan);
 }
 
+static void test_scan_ended_by_the_kernel(void)
+{
+	uint8_t ended[2] = {7, 0};
+
+	bgpd_mgmt_scan(m);
+	CHECK(expect(BGPD_OP_START_DISCOVERY) == 1);
+	reply(BGPD_OP_START_DISCOVERY, 0, &m->scan_type, 1);
+	CHECK(m->own_scan);
+	event(0x13, m->index, ended, sizeof(ended));
+	CHECK(!m->scanning && !m->own_scan);
+	/* The next press starts a new scan instead of stopping a dead one. */
+	bgpd_mgmt_scan(m);
+	CHECK(expect(BGPD_OP_START_DISCOVERY) == 1);
+	reply(BGPD_OP_START_DISCOVERY, 0, &m->scan_type, 1);
+	bgpd_mgmt_scan(m);
+	CHECK(expect(BGPD_OP_STOP_DISCOVERY) == 1);
+	reply(BGPD_OP_STOP_DISCOVERY, 0, &m->scan_type, 1);
+}
+
 static void test_power(void)
 {
 	uint8_t settings[4];
@@ -374,6 +393,7 @@ int main(void)
 	peer = fds[1];
 	init(true);
 	test_scan();
+	test_scan_ended_by_the_kernel();
 	test_power();
 	test_keys();
 	test_pairing();

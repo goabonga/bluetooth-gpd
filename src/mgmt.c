@@ -985,8 +985,13 @@ static void on_event(struct bgpd_mgmt *m, uint16_t event, uint16_t index,
 		on_device_found(m, index, p, size);
 		break;
 	case EV_DISCOVERING:
-		if (size == 2)
+		if (size == 2) {
 			m->scanning = p[1] != 0;
+			/* The kernel ends a discovery by itself after a while.
+			 */
+			if (p[1] == 0)
+				m->own_scan = false;
+		}
 		break;
 	case EV_CONNECTED:
 		if (size < 13 || size != 13 + (size_t)bgpd_get16(p + 11))
