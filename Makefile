@@ -43,7 +43,7 @@ SANITIZE ?= address,undefined
 SOURCES := $(wildcard src/*.c alsa/*.c include/*.h tests/*.c)
 BUILD   := build
 
-CORE    := device store mgmt hog avdtp audio ipc ipc_server ipc_client daemon
+CORE    := device store mgmt hog avdtp avrcp audio ipc ipc_server ipc_client daemon
 CORE_C  := $(CORE:%=src/%.c)
 LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a
