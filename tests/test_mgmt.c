@@ -272,6 +272,26 @@ static void test_unpair_and_disconnect(void)
 	CHECK(!d->paired && !d->saved && m->store.count == 0);
 }
 
+static void test_pair_while_scanning(void)
+{
+	struct bgpd_device *d = bgpd_devices_get(&m->devices, remote);
+
+	CHECK(d != NULL);
+	if (d == NULL)
+		return;
+	d->paired = false;
+	bgpd_mgmt_scan(m);
+	CHECK(expect(BGPD_OP_START_DISCOVERY) == 1);
+	reply(BGPD_OP_START_DISCOVERY, 0, &m->scan_type, 1);
+	bgpd_mgmt_pair(m, d);
+	CHECK(expect(BGPD_OP_STOP_DISCOVERY) == 1);
+	reply(BGPD_OP_STOP_DISCOVERY, 0, &m->scan_type, 1);
+	CHECK(expect(BGPD_OP_PAIR) == 8);
+	bgpd_mgmt_cancel_pair(m);
+	CHECK(expect(BGPD_OP_CANCEL_PAIR) == BGPD_ADDR_SIZE);
+	reply(BGPD_OP_PAIR, 0x10, NULL, 0);
+}
+
 static void test_trace(const char *dir)
 {
 	char path[300], text[8192] = {0};
@@ -327,6 +347,7 @@ int main(void)
 	test_pairing();
 	test_cancel_and_failure();
 	test_unpair_and_disconnect();
+	test_pair_while_scanning();
 	test_failures();
 	bgpd_mgmt_close(m);
 	test_trace(dir);

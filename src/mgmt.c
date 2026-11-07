@@ -396,6 +396,11 @@ static void prepare_pair(struct bgpd_mgmt *m)
 		say(m, "Unsupported transport");
 		return;
 	}
+	if (m->own_scan) {
+		/* Pairing while discovering makes the connection fail. */
+		command(m, BGPD_OP_STOP_DISCOVERY, &m->scan_type, 1);
+		return;
+	}
 	if ((m->settings & bit) == 0) {
 		command(m, m->pair_addr[6] != 0 ? BGPD_OP_LE : BGPD_OP_BREDR,
 			&on, 1);
@@ -722,7 +727,10 @@ static void complete(struct bgpd_mgmt *m, uint16_t op, uint8_t code,
 		break;
 	case BGPD_OP_STOP_DISCOVERY:
 		m->own_scan = m->scanning = false;
-		say(m, "Scan stopped");
+		if (m->prepare_action != 0)
+			prepare(m);
+		else
+			say(m, "Scan stopped");
 		break;
 	default:
 		say(m, "MGMT 0x%04x: OK", op);
