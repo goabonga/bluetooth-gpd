@@ -3,6 +3,8 @@
 
 #include "streams.h"
 
+#include "ipc.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,13 +41,11 @@ void bgpd_streams_init(struct bgpd_streams *s)
 int bgpd_streams_default_path(enum bgpd_stream_kind kind, char *buffer,
 			      size_t size)
 {
-	const char *dir = getenv("XDG_RUNTIME_DIR");
+	const char *dir = getenv("BLUETOOTH_RUNTIME_DIR");
 	int length;
 
-	if (dir == NULL || dir[0] != '/') {
-		errno = ENOENT;
-		return -1;
-	}
+	if (dir == NULL || dir[0] != '/')
+		dir = BGPD_RUNTIME_DIR;
 	length = snprintf(buffer, size, "%s/%s", dir, names[kind]);
 	if (length < 0 || (size_t)length >= size ||
 	    (size_t)length >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
@@ -90,7 +90,8 @@ int bgpd_streams_listen(struct bgpd_streams *s, enum bgpd_stream_kind kind,
 		if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0)
 			goto fail;
 	}
-	if (chmod(path, S_IRUSR | S_IWUSR) < 0 || listen(fd, 4) < 0) {
+	if (chmod(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP) < 0 ||
+	    listen(fd, 4) < 0) {
 		saved = errno;
 		unlink(path);
 		errno = saved;
@@ -134,8 +135,6 @@ static void drop(struct bgpd_stream_client *c)
 static void accept_clients(struct bgpd_streams *s, enum bgpd_stream_kind kind)
 {
 	for (;;) {
-		struct ucred cred;
-		socklen_t length = sizeof(cred);
 		struct bgpd_stream_client *slot = NULL;
 		int fd = accept4(s->listener[kind], NULL, NULL,
 				 SOCK_NONBLOCK | SOCK_CLOEXEC);
@@ -144,12 +143,6 @@ static void accept_clients(struct bgpd_streams *s, enum bgpd_stream_kind kind)
 			continue;
 		if (fd < 0)
 			return;
-		if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) <
-			0 ||
-		    cred.uid != geteuid()) {
-			close(fd);
-			continue;
-		}
 		for (size_t i = 0; i < BGPD_STREAMS_PENDING; i++)
 			if (s->pending[i].fd < 0) {
 				slot = &s->pending[i];

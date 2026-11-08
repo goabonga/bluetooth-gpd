@@ -67,7 +67,7 @@ int main(void)
 	struct bgpd_streams s;
 	struct bgpd_stream_request request;
 	char dir[] = "/tmp/bgpd-streams-XXXXXX";
-	char playback[100], capture[100];
+	char playback[100], capture[100], fallback[100];
 	struct stat st;
 	int client, other;
 	uint8_t rate[4];
@@ -76,10 +76,20 @@ int main(void)
 		return 2;
 	snprintf(playback, sizeof(playback), "%s/audio.sock", dir);
 	snprintf(capture, sizeof(capture), "%s/capture.sock", dir);
+	/* The default sockets are in the runtime directory of the service. */
+	unsetenv("BLUETOOTH_RUNTIME_DIR");
+	CHECK(bgpd_streams_default_path(BGPD_STREAM_PLAYBACK, fallback,
+					sizeof(fallback)) == 0 &&
+	      strcmp(fallback, "/run/bluetooth/bluetooth-audio.sock") == 0);
+	setenv("BLUETOOTH_RUNTIME_DIR", "/tmp/elsewhere", 1);
+	CHECK(bgpd_streams_default_path(BGPD_STREAM_CAPTURE, fallback,
+					sizeof(fallback)) == 0 &&
+	      strcmp(fallback, "/tmp/elsewhere/bluetooth-capture.sock") == 0);
+	unsetenv("BLUETOOTH_RUNTIME_DIR");
 	bgpd_streams_init(&s);
 	CHECK(bgpd_streams_listen(&s, BGPD_STREAM_PLAYBACK, playback) == 0);
 	CHECK(bgpd_streams_listen(&s, BGPD_STREAM_CAPTURE, capture) == 0);
-	CHECK(stat(playback, &st) == 0 && (st.st_mode & 0777U) == 0600U);
+	CHECK(stat(playback, &st) == 0 && (st.st_mode & 0777U) == 0660U);
 	CHECK(!bgpd_streams_next(&s, &request));
 
 	/* A playback client names its device. */

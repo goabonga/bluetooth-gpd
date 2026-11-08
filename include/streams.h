@@ -52,7 +52,10 @@ struct bgpd_streams {
 
 void bgpd_streams_init(struct bgpd_streams *s);
 
-/* $XDG_RUNTIME_DIR/bluetooth-audio.sock or bluetooth-capture.sock. */
+/*
+ * bluetooth-audio.sock or bluetooth-capture.sock in $BLUETOOTH_RUNTIME_DIR (an
+ * absolute path), else in /run/bluetooth.
+ */
 int bgpd_streams_default_path(enum bgpd_stream_kind kind, char *buffer,
 			      size_t size);
 
