@@ -96,7 +96,7 @@ A BLE keyboard, mouse or game controller (HID over GATT, such as a Flipper
 Zero in keyboard mode) is connected by the daemon right after its pairing
 and again whenever it is paired and in range: the daemon reads its report
 map and forwards its reports to the kernel through `/dev/uhid`. The udev rule
-`70-bluetooth-uhid.rules` gives that device to the group `bluetooth`, and
+`71-bluetooth-uhid.rules` gives that device to the group `bluetooth`, and
 the module `uhid` is loaded at boot (`modprobe uhid` loads it at once).
 
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon

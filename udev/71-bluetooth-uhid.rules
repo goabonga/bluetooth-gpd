@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+#
+# bluetooth-daemon forwards the reports of Bluetooth HID devices to the
+# kernel through /dev/uhid, which only root can open by default. Give it
+# to the group of the daemon. 70-uaccess.rules tags it for the user of the
+# seat, whose ACL would leave the group without access: drop the tag, which
+# is why this file is read after it.
+KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="bluetooth", MODE="0660", TAG-="uaccess"

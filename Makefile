@@ -118,7 +118,7 @@ install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm644 alsa/99-bluetooth.conf $(DESTDIR)$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf
 	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
 	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/system/bluetooth-daemon.service
-	install -Dm644 udev/70-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/70-bluetooth-uhid.rules
+	install -Dm644 udev/71-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
 	install -Dm644 sysusers/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf
 	install -Dm644 modules-load/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/modules-load.d/bluetooth-daemon.conf
 
@@ -127,7 +127,7 @@ uninstall: ## Remove the files installed under PREFIX
 	rm -f $(DESTDIR)$(ALSA_PLUGIN_DIR)/$(PLUGIN)
 	rm -f $(DESTDIR)$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf
 	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/bluetooth-daemon.service
-	rm -f $(DESTDIR)$(PREFIX)/lib/udev/rules.d/70-bluetooth-uhid.rules
+	rm -f $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
 	rm -f $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf
 	rm -f $(DESTDIR)$(PREFIX)/lib/modules-load.d/bluetooth-daemon.conf
 
