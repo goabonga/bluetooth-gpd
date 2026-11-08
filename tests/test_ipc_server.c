@@ -96,9 +96,21 @@ int main(void)
 	m->ready = true;
 	snprintf(m->status, sizeof(m->status), "Ready");
 
+	/* The default socket is in the runtime directory of the service. */
+	unsetenv("BLUETOOTH_RUNTIME_DIR");
+	CHECK(bgpd_ipc_default_path(line, sizeof(line)) == 0 &&
+	      strcmp(line, "/run/bluetooth/bluetooth.sock") == 0);
+	setenv("BLUETOOTH_RUNTIME_DIR", "/tmp/elsewhere", 1);
+	CHECK(bgpd_ipc_default_path(line, sizeof(line)) == 0 &&
+	      strcmp(line, "/tmp/elsewhere/bluetooth.sock") == 0);
+	setenv("BLUETOOTH_RUNTIME_DIR", "relative", 1);
+	CHECK(bgpd_ipc_default_path(line, sizeof(line)) == 0 &&
+	      strcmp(line, "/run/bluetooth/bluetooth.sock") == 0);
+	unsetenv("BLUETOOTH_RUNTIME_DIR");
+
 	CHECK(bgpd_ipc_listen(server, path) == 0);
 	CHECK(stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
-	CHECK((st.st_mode & 0777U) == 0600U);
+	CHECK((st.st_mode & 0777U) == 0660U);
 	CHECK(bgpd_ipc_listen(other, path) == -1 && errno == EADDRINUSE);
 
 	/* A client receives the state when it connects. */

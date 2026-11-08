@@ -14,13 +14,11 @@
 
 int bgpd_ipc_default_path(char *buffer, size_t size)
 {
-	const char *dir = getenv("XDG_RUNTIME_DIR");
+	const char *dir = getenv("BLUETOOTH_RUNTIME_DIR");
 	int length;
 
-	if (dir == NULL || dir[0] != '/') {
-		errno = ENOENT;
-		return -1;
-	}
+	if (dir == NULL || dir[0] != '/')
+		dir = BGPD_RUNTIME_DIR;
 	length = snprintf(buffer, size, "%s/bluetooth.sock", dir);
 	if (length < 0 || (size_t)length >= size ||
 	    (size_t)length >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
@@ -77,7 +75,8 @@ int bgpd_ipc_listen(struct bgpd_ipc_server *server, const char *path)
 		if (bind_socket(fd, &address) < 0)
 			goto fail;
 	}
-	if (chmod(path, S_IRUSR | S_IWUSR) < 0 || listen(fd, 4) < 0) {
+	if (chmod(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP) < 0 ||
+	    listen(fd, 4) < 0) {
 		saved = errno;
 		unlink(path);
 		errno = saved;
@@ -115,8 +114,6 @@ static void send_snapshot(struct bgpd_ipc_peer *peer, const char *text,
 static void accept_clients(struct bgpd_ipc_server *server)
 {
 	for (;;) {
-		struct ucred cred;
-		socklen_t length = sizeof(cred);
 		struct bgpd_ipc_peer *slot = NULL;
 		int fd = accept4(server->listener, NULL, NULL,
 				 SOCK_NONBLOCK | SOCK_CLOEXEC);
@@ -125,12 +122,6 @@ static void accept_clients(struct bgpd_ipc_server *server)
 			continue;
 		if (fd < 0)
 			return;
-		if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) <
-			0 ||
-		    cred.uid != geteuid()) {
-			close(fd);
-			continue;
-		}
 		for (size_t i = 0; i < BGPD_IPC_MAX_CLIENTS; i++)
 			if (server->peers[i].fd < 0) {
 				slot = &server->peers[i];

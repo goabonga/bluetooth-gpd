@@ -84,13 +84,19 @@ struct bgpd_ipc_server {
 typedef void (*bgpd_ipc_handler)(void *context,
 				 const struct bgpd_ipc_command *command);
 
-/* $XDG_RUNTIME_DIR/bluetooth.sock; -1 when there is no such directory. */
+/* Where the daemon, run as a system service, keeps its sockets. */
+#define BGPD_RUNTIME_DIR "/run/bluetooth"
+
+/*
+ * bluetooth.sock in $BLUETOOTH_RUNTIME_DIR (an absolute path), else in
+ * BGPD_RUNTIME_DIR; -1 when the path does not fit a socket address.
+ */
 int bgpd_ipc_default_path(char *buffer, size_t size);
 
 /*
- * Starts listening on a Unix socket only its owner can use. A socket left
- * by a stopped daemon is replaced; one that answers makes it fail with
- * EADDRINUSE.
+ * Starts listening on a Unix socket its owner and its group can use. A
+ * socket left by a stopped daemon is replaced; one that answers makes it
+ * fail with EADDRINUSE.
  */
 int bgpd_ipc_listen(struct bgpd_ipc_server *server, const char *path);
 
