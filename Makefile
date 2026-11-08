@@ -121,6 +121,16 @@ install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm644 udev/71-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
 	install -Dm644 sysusers/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf
 	install -Dm644 modules-load/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/modules-load.d/bluetooth-daemon.conf
+ifeq ($(DESTDIR),)
+	# Create the user, load uhid and apply the udev rule at once; a failure
+	# (no systemd, not root) only means these steps are left to the user.
+	-systemd-sysusers
+	-modprobe uhid
+	-udevadm control --reload
+	-setfacl -b /dev/uhid
+	-udevadm trigger /dev/uhid
+	-systemctl daemon-reload
+endif
 
 uninstall: ## Remove the files installed under PREFIX
 	rm -f $(DESTDIR)$(PREFIX)/bin/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
@@ -130,6 +140,10 @@ uninstall: ## Remove the files installed under PREFIX
 	rm -f $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
 	rm -f $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf
 	rm -f $(DESTDIR)$(PREFIX)/lib/modules-load.d/bluetooth-daemon.conf
+ifeq ($(DESTDIR),)
+	-udevadm control --reload
+	-systemctl daemon-reload
+endif
 
 clean: ## Remove the build directory
 	rm -rf $(BUILD)
