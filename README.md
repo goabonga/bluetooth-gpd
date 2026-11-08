@@ -23,7 +23,10 @@ make
 `make install` installs `bluetooth`, `bluetooth-daemon`, the ALSA plugin, the
 systemd service of the daemon and its support files (a sysusers.d file for its
 user, a udev rule and a modules-load.d file for `/dev/uhid`) under `$(PREFIX)`
-(default `/usr/local`), honouring `DESTDIR`. `make uninstall` removes them.
+(default `/usr/local`), honouring `DESTDIR`. Without `DESTDIR` it also
+creates the user of the daemon, loads the `uhid` module, applies the udev rule
+and reloads systemd (as root; a step that fails is skipped).
+`make uninstall` removes the files and reloads udev and systemd.
 
 ## Usage
 
@@ -47,11 +50,8 @@ users of the group `bluetooth` can use: add yours to it.
 
 ```bash
 sudo make install PREFIX=/usr
-sudo systemd-sysusers
 sudo usermod -aG bluetooth $USER      # then log in again
 sudo systemctl mask --now bluetooth.service
-sudo modprobe uhid
-sudo udevadm control --reload && sudo udevadm trigger /dev/uhid
 sudo systemctl enable --now bluetooth-daemon
 bluetooth
 ```
