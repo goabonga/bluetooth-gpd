@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+#
+# bluetooth-daemon forwards the reports of Bluetooth HID devices to the
+# kernel through /dev/uhid, which only root can open by default. Give it
+# to the user of the active local session, who runs the daemon.
+KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"

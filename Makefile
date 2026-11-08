@@ -92,6 +92,7 @@ install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth-daemon $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
 	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
 	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/user/bluetooth-daemon.service
+	install -Dm644 udev/70-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/70-bluetooth-uhid.rules
 
 # Lets the daemon open the management socket without running as root. It
 # drops the capability as soon as the socket is bound.
