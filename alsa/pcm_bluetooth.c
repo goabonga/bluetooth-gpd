@@ -331,14 +331,15 @@ SND_PCM_PLUGIN_DEFINE_FUNC(bluetooth)
 	if (stream == SND_PCM_STREAM_CAPTURE)
 		server = capture_server;
 	if (server == NULL) {
-		const char *dir = getenv("XDG_RUNTIME_DIR");
+		const char *dir = getenv("BLUETOOTH_RUNTIME_DIR");
 
-		if (dir == NULL || dir[0] != '/' ||
-		    snprintf(fallback, sizeof(fallback), "%s/%s", dir,
+		if (dir == NULL || dir[0] != '/')
+			dir = "/run/bluetooth";
+		if (snprintf(fallback, sizeof(fallback), "%s/%s", dir,
 			     stream == SND_PCM_STREAM_CAPTURE
 				 ? "bluetooth-capture.sock"
 				 : "bluetooth-audio.sock") >=
-			(int)sizeof(fallback))
+		    (int)sizeof(fallback))
 			return -ENOENT;
 		server = fallback;
 	}
