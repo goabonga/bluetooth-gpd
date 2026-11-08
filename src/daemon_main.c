@@ -139,7 +139,7 @@ int main(int argc, char **argv)
 	if (sock == NULL) {
 		if (bgpd_ipc_default_path(socket_path, sizeof(socket_path)) <
 		    0) {
-			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
+			fprintf(stderr, "The socket path is too long\n");
 			status = 1;
 			goto done;
 		}
@@ -153,7 +153,7 @@ int main(int argc, char **argv)
 	if (audio_sock == NULL) {
 		if (bgpd_streams_default_path(BGPD_STREAM_PLAYBACK, audio_path,
 					      sizeof(audio_path)) < 0) {
-			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
+			fprintf(stderr, "The socket path is too long\n");
 			status = 1;
 			goto done;
 		}
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
 	if (capture_sock == NULL) {
 		if (bgpd_streams_default_path(BGPD_STREAM_CAPTURE, capture_path,
 					      sizeof(capture_path)) < 0) {
-			fprintf(stderr, "No XDG_RUNTIME_DIR for the socket\n");
+			fprintf(stderr, "The socket path is too long\n");
 			status = 1;
 			goto done;
 		}
