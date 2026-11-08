@@ -20,9 +20,10 @@ make
 ./build/bluetooth --version
 ```
 
-`make install` installs `bluetooth`, `bluetooth-daemon` and the systemd
-user unit of the daemon under `$(PREFIX)` (default `/usr/local`), honouring
-`DESTDIR`.
+`make install` installs `bluetooth`, `bluetooth-daemon`, the ALSA plugin, the
+systemd service of the daemon and its support files (a sysusers.d file for its
+user, a udev rule and a modules-load.d file for `/dev/uhid`) under `$(PREFIX)`
+(default `/usr/local`), honouring `DESTDIR`. `make uninstall` removes them.
 
 ## Usage
 
@@ -35,20 +36,23 @@ daemon talks to the Linux kernel Bluetooth Management API directly.
 - `bluetooth` is the terminal interface. It needs no privilege: it shows the
   state the daemon sends and turns keys into commands for it.
 
-They talk through the Unix socket `$XDG_RUNTIME_DIR/bluetooth.sock`, which
-only the owner can use.
+The daemon is a system service. It runs as its own user, `bluetooth`, which
+systemd gives the `CAP_NET_ADMIN` capability the kernel requires to open the
+management socket; the daemon drops it as soon as the socket is open. Its
+pairing keys are in `/var/lib/bluetooth`, private to it.
 
-The kernel requires `CAP_NET_ADMIN` to open the management socket. The
-daemon drops every capability once it is open, so grant it to the binary:
-
-File capabilities are ignored on a `nosuid` filesystem (`/home` often is), so
-install the binary first (`sudo make install`) rather than running the one in
-`build/`. Run the daemon as your user, not as root: its sockets belong to the
-user of the interface.
+The interface and the other programs talk to it through Unix sockets in
+`/run/bluetooth` (`bluetooth.sock` for the control protocol), which the
+users of the group `bluetooth` can use: add yours to it.
 
 ```bash
-sudo make install-capabilities
-systemctl --user enable --now bluetooth-daemon
+sudo make install PREFIX=/usr
+sudo systemd-sysusers
+sudo usermod -aG bluetooth $USER      # then log in again
+sudo systemctl mask --now bluetooth.service
+sudo modprobe uhid
+sudo udevadm control --reload && sudo udevadm trigger /dev/uhid
+sudo systemctl enable --now bluetooth-daemon
 bluetooth
 ```
 
@@ -59,8 +63,10 @@ bluetooth [--demo] [--ascii] [--socket PATH]
 
 `bluetooth --demo` runs without the daemon on three fake devices. `--ascii`
 replaces the powerline glyphs. The daemon keeps the pairing keys per adapter
-under `$XDG_STATE_HOME/bluetooth` (`~/.local/state/bluetooth`), in a
-private directory locked while it runs. Use one Bluetooth manager per
+in the directory of `--state-dir` (`$XDG_STATE_HOME/bluetooth` when it is
+not given), private and locked while it runs; the service uses
+`/var/lib/bluetooth`. `BLUETOOTH_RUNTIME_DIR` replaces `/run/bluetooth`
+for the programs that look for the sockets. Use one Bluetooth manager per
 adapter: loading keys replaces the kernel's key lists. `bluetoothd` receives
 the same authentication requests and refuses them, so pairing fails at once:
 the interface shows a warning when it runs, and
@@ -89,10 +95,9 @@ connects as soon as it runs.
 A BLE keyboard, mouse or game controller (HID over GATT, such as a Flipper
 Zero in keyboard mode) is connected by the daemon right after its pairing
 and again whenever it is paired and in range: the daemon reads its report
-map and forwards its reports to the kernel through `/dev/uhid`. `make install` installs the udev rule
-`70-bluetooth-uhid.rules`, which gives that device to the user of the active
-local session (`sudo udevadm control --reload && sudo udevadm trigger
-/dev/uhid`, or a new login, applies it).
+map and forwards its reports to the kernel through `/dev/uhid`. The udev rule
+`70-bluetooth-uhid.rules` gives that device to the group `bluetooth`, and
+the module `uhid` is loaded at boot (`modprobe uhid` loads it at once).
 
 A Classic headset or speaker (A2DP sink) is connected with `c`: the daemon
 negotiates an SBC stream (44.1 or 48 kHz, joint stereo first, bitpool up to
@@ -127,7 +132,7 @@ pcm.speaker { type plug slave.pcm { type bluetooth device "AA:BB:CC:DD:EE:FF" } 
 ```
 
 The plugin talks to the audio socket of the daemon,
-`$XDG_RUNTIME_DIR/bluetooth-audio.sock` (`--audio-socket PATH`; `server "PATH"`
+`/run/bluetooth/bluetooth-audio.sock` (`--audio-socket PATH`; `server "PATH"`
 in the PCM definition). It sends `BGPDPCM2` and the address of the device,
 14 hexadecimal digits as in the control protocol (all zeros for the device
 connected last) and a newline, receives the sample rate negotiated with the
@@ -163,7 +168,7 @@ supports it, else CVSD at 8 kHz) and opens the SCO voice link. The PCM then
 receives the microphone as mono 16-bit samples at the rate of the link
 (`plug` converts to the rate you ask), and opening it can take several
 seconds. Closing it ends the voice and hands-free links. The audio socket
-for it is `$XDG_RUNTIME_DIR/bluetooth-capture.sock` (`--capture-socket PATH`;
+for it is `/run/bluetooth/bluetooth-capture.sock` (`--capture-socket PATH`;
 `capture_server "PATH"` in the PCM definition): the client sends `BGPDCAP2`,
 the address of the device and a newline as for playback, receives the sample
 rate (4 bytes, little-endian; 0 when there is no headset or the link failed)
@@ -174,7 +179,7 @@ headsets lower its quality or pause it while the voice link is open.
 ## Control protocol
 
 Other programs can follow and drive the daemon on its control socket
-(`$XDG_RUNTIME_DIR/bluetooth.sock`, text lines). The daemon sends a snapshot
+(`/run/bluetooth/bluetooth.sock`, text lines). The daemon sends a snapshot
 of its state whenever it changes: tab-separated records `state`, `adapter`,
 `status`, `warning`, `prompt`, one `device` per device
 (`ADDR14 flags rssi name`, the address being 14 hexadecimal digits: six
