@@ -91,8 +91,7 @@ int main(int argc, char **argv)
 		if (sock == NULL) {
 			if (bgpd_ipc_default_path(socket_path,
 						  sizeof(socket_path)) < 0) {
-				fputs("No XDG_RUNTIME_DIR for the daemon "
-				      "socket.\n",
+				fputs("The daemon socket path is too long.\n",
 				      stderr);
 				status = 1;
 				goto done;
