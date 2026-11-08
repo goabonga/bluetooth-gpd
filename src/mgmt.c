@@ -294,9 +294,9 @@ int bgpd_mgmt_open(struct bgpd_mgmt *m)
 	int fd;
 
 	if (!has_net_admin()) {
-		say(m, "Bluetooth access is not configured: the program needs "
-		       "the CAP_NET_ADMIN capability (setcap has no effect on "
-		       "a nosuid filesystem such as /home)");
+		say(m, "Bluetooth access is not configured: the daemon needs "
+		       "the CAP_NET_ADMIN capability, which its systemd "
+		       "service grants");
 		return -1;
 	}
 	fd = socket(AF_BLUETOOTH_FAMILY,
