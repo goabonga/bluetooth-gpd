@@ -54,7 +54,7 @@ static void lost(struct bgpd_ipc_client *client, struct bgpd_mgmt *mirror)
 	mirror->prompt_kind = BGPD_PROMPT_NONE;
 	mirror->prompt[0] = '\0';
 	snprintf(mirror->status, sizeof(mirror->status),
-		 "Waiting for the daemon (systemctl --user start "
+		 "Waiting for the daemon (systemctl start "
 		 "bluetooth-daemon)");
 }
 
