@@ -49,7 +49,7 @@ LIB_OBJ := $(CORE:%=$(BUILD)/%.o)
 LIB     := $(BUILD)/libbgpd.a
 TESTS   := $(patsubst tests/%.c,$(BUILD)/%,$(wildcard tests/test_*.c))
 
-.PHONY: help all test format format-check lint clean install install-capabilities
+.PHONY: help all test format format-check lint clean install
 
 .DEFAULT_GOAL := all
 
@@ -117,13 +117,10 @@ install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/$(PLUGIN) $(DESTDIR)$(ALSA_PLUGIN_DIR)/$(PLUGIN)
 	install -Dm644 alsa/99-bluetooth.conf $(DESTDIR)$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf
 	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
-	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/user/bluetooth-daemon.service
+	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/system/bluetooth-daemon.service
 	install -Dm644 udev/70-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/70-bluetooth-uhid.rules
-
-# Lets the daemon open the management socket without running as root. It
-# drops the capability as soon as the socket is bound.
-install-capabilities: ## Grant the installed daemon CAP_NET_ADMIN
-	setcap cap_net_admin+ep $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
+	install -Dm644 sysusers/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf
+	install -Dm644 modules-load/bluetooth-daemon.conf $(DESTDIR)$(PREFIX)/lib/modules-load.d/bluetooth-daemon.conf
 
 clean: ## Remove the build directory
 	rm -rf $(BUILD)

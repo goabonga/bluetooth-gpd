@@ -2,9 +2,26 @@
 Description=Bluetooth daemon: keeps the paired devices connected and streams audio to them
 
 [Service]
-ExecStart=@BINDIR@/bluetooth-daemon
+User=bluetooth
+Group=bluetooth
+ExecStart=@BINDIR@/bluetooth-daemon --state-dir /var/lib/bluetooth
+# The pairing keys, private to the daemon, and the sockets, which the users
+# of the group bluetooth can reach.
+StateDirectory=bluetooth
+StateDirectoryMode=0700
+RuntimeDirectory=bluetooth
+RuntimeDirectoryMode=0750
+# CAP_NET_ADMIN opens the kernel management socket; the daemon drops it
+# right after.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_BLUETOOTH
 Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
