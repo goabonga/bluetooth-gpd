@@ -60,7 +60,10 @@ program warns when it runs, and `systemctl stop bluetooth` fixes it.
 A BLE keyboard, mouse or game controller (HID over GATT, such as a Flipper
 Zero in keyboard mode) is connected right after its pairing and with `c`:
 the program reads its report map and forwards its reports to the kernel
-through `/dev/uhid`, which the user needs to be allowed to open. A device
+through `/dev/uhid`. `make install` installs the udev rule
+`70-bluetooth-uhid.rules`, which gives that device to the user of the active
+local session (`sudo udevadm control --reload && sudo udevadm trigger
+/dev/uhid`, or a new login, applies it). A device
 stays connected only while the program runs, and Classic devices are not
 connected yet.
 
