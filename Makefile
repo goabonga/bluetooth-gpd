@@ -7,6 +7,7 @@ CFLAGS  ?= -O2
 WERROR  ?= -Werror
 CFLAGS  += -std=c11 -Wall -Wextra -Wpedantic $(WERROR) -D_GNU_SOURCE -Iinclude
 PREFIX  ?= /usr/local
+SYSCONFDIR ?= /etc
 PKG_CONFIG ?= pkg-config
 #libsbc encodes the audio sent to Bluetooth headsets and speakers.
 SBC_CFLAGS := $(shell $(PKG_CONFIG) --cflags sbc)
@@ -115,7 +116,7 @@ install: all ## Install under PREFIX, honouring DESTDIR
 	install -Dm755 $(BUILD)/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth
 	install -Dm755 $(BUILD)/bluetooth-daemon $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
 	install -Dm755 $(BUILD)/$(PLUGIN) $(DESTDIR)$(ALSA_PLUGIN_DIR)/$(PLUGIN)
-	install -Dm644 alsa/99-bluetooth.conf $(DESTDIR)$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf
+	install -Dm644 alsa/99-bluetooth.conf $(DESTDIR)$(SYSCONFDIR)/alsa/conf.d/99-bluetooth.conf
 	sed 's|@BINDIR@|$(PREFIX)/bin|' systemd/bluetooth-daemon.service.in > $(BUILD)/bluetooth-daemon.service
 	install -Dm644 $(BUILD)/bluetooth-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/system/bluetooth-daemon.service
 	install -Dm644 udev/71-bluetooth-uhid.rules $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
@@ -135,7 +136,7 @@ endif
 uninstall: ## Remove the files installed under PREFIX
 	rm -f $(DESTDIR)$(PREFIX)/bin/bluetooth $(DESTDIR)$(PREFIX)/bin/bluetooth-daemon
 	rm -f $(DESTDIR)$(ALSA_PLUGIN_DIR)/$(PLUGIN)
-	rm -f $(DESTDIR)$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf
+	rm -f $(DESTDIR)$(SYSCONFDIR)/alsa/conf.d/99-bluetooth.conf
 	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/bluetooth-daemon.service
 	rm -f $(DESTDIR)$(PREFIX)/lib/udev/rules.d/71-bluetooth-uhid.rules
 	rm -f $(DESTDIR)$(PREFIX)/lib/sysusers.d/bluetooth-daemon.conf

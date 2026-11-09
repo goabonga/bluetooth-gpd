@@ -113,7 +113,7 @@ encoding, as a gain from -50 dB at 1 % to silence at 0.
 Applications play through the ALSA PCM `bluetooth_out` (`make install`
 puts `libasound_module_pcm_bluetooth.so` in `$(ALSA_PLUGIN_DIR)`, default
 `$(PREFIX)/lib/alsa-lib`, and the definitions in
-`$(PREFIX)/share/alsa/alsa.conf.d/99-bluetooth.conf`; ALSA only loads
+`$(SYSCONFDIR)/alsa/conf.d/99-bluetooth.conf`, default `/etc`; ALSA only loads
 plugins from its own directory, so use `PREFIX=/usr`):
 
 ```bash
