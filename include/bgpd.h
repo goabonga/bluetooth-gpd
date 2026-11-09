@@ -4,6 +4,6 @@
 #ifndef BGPD_H
 #define BGPD_H
 
-#define BGPD_VERSION "0.1.0"
+#define BGPD_VERSION "0.1.1"
 
 #endif /* BGPD_H */

@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.1] - 2026-11-09
+
+### Fixed
+
+- install the ALSA definitions in /etc/alsa/conf.d (`b535f5b`)
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
