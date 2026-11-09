@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "git_head": "957b99925a3cdbf0c283877c9d4605838101bc54",
+  "git_head_short": "957b999",
+  "timestamp": "2026-11-09T11:32:59Z",
+  "components": {
+    "bluetooth-gpd": {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "tag_sha": null
+    }
+  }
+}
